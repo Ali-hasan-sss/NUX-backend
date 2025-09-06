@@ -44,7 +44,9 @@
     "uuid": "^11.1.0",
     "xss": "^1.0.15",
     "zod": "^4.0.15",
-    "ts-jest": "^29.4.1"
+    "ts-jest": "^29.4.1",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^24.2.0"
   },
   "devDependencies": {
     "@types/bcrypt": "^6.0.0",
