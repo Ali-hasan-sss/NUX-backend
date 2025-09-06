@@ -22,7 +22,7 @@ export const corsOptions = {
   origin: (origin: any, callback: any) => {
     // allow requests with no origin like mobile apps or curl
     if (!origin) return callback(null, true);
-    const allowed = ['http://localhost:3000', 'https://nux-backend.onrender.com'];
+    const allowed = ['http://localhost:3000', 'https://nux-frondend-nextjs.vercel.app'];
     if (allowed.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
