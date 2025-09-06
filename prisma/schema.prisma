@@ -1,0 +1,326 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  RESTAURANT_OWNER
+  ADMIN
+}
+
+enum SubscriptionStatus {
+  PENDING
+  ACTIVE
+  CANCELLED
+  EXPIRED
+}
+
+enum paymentType {
+  balance
+  stars_meal
+  stars_drink
+}
+
+enum scanType {
+  drink
+  meal
+}
+
+model User {
+  id                      String                  @id @default(uuid())
+  email                   String                  @unique
+  password                String
+  fullName                String?
+  role                    Role                    @default(USER)
+  emailVerified           DateTime?
+  emailVerificationCode   String?
+  emailVerificationExpiry DateTime?
+  passwordResetCode       String?
+  passwordResetExpiry     DateTime?
+  refreshToken            String?
+  qrCode                  String                  @unique
+  firebaseToken           String?
+  isRestaurant            Boolean                 @default(false)
+  isActive                Boolean                 @default(true)
+  restaurants             Restaurant[]
+  balances                UserRestaurantBalance[]
+  purchases               Purchase[]
+  payments                Payment[]
+  topUps                  TopUp[]
+  giftsSent               Gift[]                  @relation("GiftFrom")
+  giftsReceived           Gift[]                  @relation("GiftTo")
+  notifications           Notification[]
+  scanLogs                ScanLog[]
+  StarsTransactions       StarsTransaction[]
+  createdAt               DateTime                @default(now())
+  updatedAt               DateTime                @default(now()) @updatedAt
+}
+
+model Restaurant {
+  id                   String          @id @default(uuid())
+  userId               String          @unique
+  owner                User            @relation(fields: [userId], references: [id])
+  name                 String
+  logo                 String?
+  address              String
+  latitude             Float
+  longitude            Float
+  isActive             Boolean         @default(true)
+  isSubscriptionActive Boolean         @default(false)
+  isGroupMember        Boolean         @default(false)
+  PayPal_Email         Json?
+  paypalAccessToken    String?
+  paypalRefreshToken   String?
+  qrCode_drink         String?         @unique
+  qrCode_meal          String?         @unique
+  createdAt            DateTime        @default(now())
+  balances             UserRestaurantBalance[]
+  purchases            Purchase[]
+  payments             Payment[]
+  TopUpPackages        TopUpPackage[]
+  topUps               TopUp[]
+  ads                  Ad[]
+  groupMemberships     GroupMembership[]
+  ownedGroups          RestaurantGroup[]
+  gifts                Gift[]
+  scanLogs             ScanLog[]
+  starsTransactions    StarsTransaction[]
+  menuCategories       MenuCategory[]
+  subscriptions        Subscription[]  @relation("RestaurantSubscriptions")
+}
+
+
+model Plan {
+  id             Int             @id @default(autoincrement())
+  title          String
+  description    String?
+  currency    String?
+  subscriberCount Int             @default(0)
+  price          Float
+  duration       Int
+  isActive       Boolean         @default(true)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @default(now()) @updatedAt
+  subscriptions  Subscription[]
+}
+
+model Subscription {
+  id             Int             @id @default(autoincrement())
+  restaurantId   String
+  restaurant     Restaurant  @relation("RestaurantSubscriptions", fields: [restaurantId], references: [id])
+  planId         Int
+  plan           Plan        @relation(fields: [planId], references: [id])
+  startDate      DateTime    @default(now())
+  endDate        DateTime
+  status         SubscriptionStatus @default(PENDING)
+  paymentId      String?
+  paymentMethod  String?
+  paymentStatus  String?
+  transactionRef String?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @default(now()) @updatedAt
+  @@index([planId, status])
+  @@index([endDate])
+  @@index([restaurantId, endDate, status])
+}
+
+
+model UserRestaurantBalance {
+  id           String     @id @default(uuid())
+  user         User       @relation(fields: [userId], references: [id])
+  userId       String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
+  restaurantId String
+  stars_drink  Int        @default(0)
+  stars_meal   Int        @default(0)
+  balance      Float      @default(0)
+  updatedAt    DateTime   @updatedAt
+
+  @@unique([userId, restaurantId])
+}
+
+model ScanLog {
+  id           Int        @id @default(autoincrement())
+  userId       String
+  restaurantId String
+  type         scanType
+  qrCode       String
+  latitude     Float
+  longitude    Float
+  createdAt    DateTime   @default(now())
+  user         User       @relation(fields: [userId], references: [id])
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
+}
+
+model StarsTransaction {
+  id           Int        @id @default(autoincrement())
+  userId       String
+  restaurantId String
+  type         scanType
+  stars_drink  Int        @default(0)
+  stars_meal   Int        @default(0)
+  createdAt    DateTime   @default(now())
+  user         User       @relation(fields: [userId], references: [id])
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
+}
+
+model Purchase {
+  id           String           @id @default(uuid())
+  userId       String
+  user         User             @relation(fields: [userId], references: [id])
+  restaurantId String?
+  restaurant   Restaurant?      @relation(fields: [restaurantId], references: [id])
+  groupId      String?
+  group        RestaurantGroup? @relation(fields: [groupId], references: [id])
+  paymentType  paymentType
+  amount       Float
+  createdAt    DateTime         @default(now())
+}
+
+model Payment {
+  id            String     @id @default(uuid())
+  userId        String
+  restaurantId  String
+  user          User       @relation(fields: [userId], references: [id])
+  restaurant    Restaurant @relation(fields: [restaurantId], references: [id])
+  amount        Float
+  method        String
+  status        String
+  transactionId String
+  createdAt     DateTime   @default(now())
+}
+
+model TopUpPackage {
+  id           Int        @id @default(autoincrement())
+  restaurantId String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  name         String
+  amount       Float
+  bonus        Float      @default(0)
+  currency     String     @default("EUR")
+  description  String?
+  isActive     Boolean    @default(true)
+  isPublic     Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  topUps       TopUp[]
+
+  @@unique([restaurantId, name])
+  @@index([restaurantId, isActive])
+}
+
+model TopUp {
+  id                Int           @id @default(autoincrement())
+  userId            String
+  restaurantId      String
+  user              User          @relation(fields: [userId], references: [id])
+  restaurant        Restaurant    @relation(fields: [restaurantId], references: [id])
+  amount            Float
+  bonus             Float
+  totalBalanceAdded Float
+  method            String
+  createdAt         DateTime      @default(now())
+  planId            Int?
+  plan              TopUpPackage? @relation(fields: [planId], references: [id])
+}
+
+model Gift {
+  id           Int              @id @default(autoincrement())
+  fromUserId   String
+  toUserId     String
+  restaurantId String?
+  groupId      String?
+  fromUser     User             @relation("GiftFrom", fields: [fromUserId], references: [id])
+  toUser       User             @relation("GiftTo", fields: [toUserId], references: [id])
+  restaurant   Restaurant?       @relation(fields: [restaurantId], references: [id])
+  group        RestaurantGroup? @relation(fields: [groupId], references: [id])
+  type         paymentType
+  amount       Float
+  status       String
+  createdAt    DateTime         @default(now())
+}
+
+model Notification {
+  id        Int      @id @default(autoincrement())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  title     String
+  body      String
+  type      String
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model RestaurantGroup {
+  id           String             @id @default(uuid())
+  name         String
+  description  String
+  ownerId      String
+  owner        Restaurant         @relation(fields: [ownerId], references: [id])
+  members      GroupMembership[]
+  joinRequests GroupJoinRequest[]
+  purchases    Purchase[]
+  gifts        Gift[]
+}
+
+model GroupMembership {
+  groupId      String
+  restaurantId String
+  group        RestaurantGroup @relation(fields: [groupId], references: [id])
+  restaurant   Restaurant      @relation(fields: [restaurantId], references: [id])
+  joinedAt     DateTime        @default(now())
+  @@id([groupId, restaurantId])
+}
+
+model GroupJoinRequest {
+  id               Int             @id @default(autoincrement())
+  fromRestaurantId String
+  toRestaurantId   String
+  groupId          String
+  group            RestaurantGroup @relation(fields: [groupId], references: [id])
+  status           String
+  createdAt        DateTime        @default(now())
+  respondedAt      DateTime?
+}
+
+model Ad {
+  id           Int        @id @default(autoincrement())
+  restaurantId String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
+  title        String
+  description  String
+  image        String
+  category     String
+  createdAt    DateTime   @default(now())
+}
+
+model MenuCategory {
+  id           Int          @id @default(autoincrement())
+  restaurantId String
+  restaurant   Restaurant   @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  title        String
+  description  String?
+  image         String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @default(now()) @updatedAt
+  items        MenuItem[]
+
+  @@index([restaurantId])
+}
+
+model MenuItem {
+  id            Int           @id @default(autoincrement())
+  categoryId    Int
+  category      MenuCategory  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  title         String
+  description   String?
+  price         Float
+  image         String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @default(now()) @updatedAt
+}

@@ -1,0 +1,37 @@
+import { Router } from 'express';
+import authRoutes from './client/auth.routes';
+import usersRoutes from './admin/admin.users.routes';
+import restaurantsRoutes from './admin/admin.restaurant.routes';
+import plansRoutes from './admin/admin.plans.routes';
+import subscriptionsRoutes from './admin/admin.subscription.routes';
+import accountRoutes from './client/account.routes';
+import balanceRoutes from './client/balances.route';
+import clientMenuRoutes from './client/menu.client.routes';
+import adsRestaurantsRoutes from './restaurant/restaurant.ad.routes';
+import menuRoutes from './restaurant/menu.restaurant.routes';
+import restaurantAccountRoutes from './restaurant/restaurant.account.routes';
+import packagesRoutes from './restaurant/restaurant.packages.routes';
+import groupsRoutes from './restaurant/restaurant.group.routes';
+import firebaseRoutes from './common/firebase.routes';
+import adscommonRoutes from './common/ads.routes';
+import notificationsRoutes from './common/notification.routes';
+
+const router = Router();
+
+router.use('/auth', authRoutes);
+router.use('/admin/users', usersRoutes);
+router.use('/admin/restaurants', restaurantsRoutes);
+router.use('/admin/plans', plansRoutes);
+router.use('/admin/subscriptions', subscriptionsRoutes);
+router.use('/client/account', accountRoutes);
+router.use('/client/balance', balanceRoutes);
+router.use('/client/menu', clientMenuRoutes);
+router.use('/restaurants/ads', adsRestaurantsRoutes);
+router.use('/restaurants/menu', menuRoutes);
+router.use('/restaurants/account', restaurantAccountRoutes);
+router.use('/restaurants', packagesRoutes);
+router.use('/groups', groupsRoutes);
+router.use('/ads', adscommonRoutes);
+router.use('/firebase', firebaseRoutes);
+router.use('/notifications', notificationsRoutes);
+export default router;
