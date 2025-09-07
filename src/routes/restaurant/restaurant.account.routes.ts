@@ -3,10 +3,23 @@ import { body, param } from 'express-validator';
 import { validateRequest } from '../../middlewares/security';
 
 import { authenticateUser } from '../../middlewares/Auth';
-import { updateRestaurantByOwner } from '../../controllers/restaurant/restaurant.info.controller';
+import {
+  updateRestaurantByOwner,
+  getRestaurantByOwner,
+  regenerateRestaurantQRCodes,
+} from '../../controllers/restaurant/restaurant.info.controller';
 import { verifyRestaurantOwnership } from '../../middlewares/Authorization';
 
 const router = express.Router();
+
+// Get own restaurant
+router.get(
+  '/me',
+  authenticateUser,
+  verifyRestaurantOwnership,
+  validateRequest,
+  getRestaurantByOwner,
+);
 
 router.put(
   '/update',
@@ -26,5 +39,14 @@ router.put(
 
   validateRequest,
   updateRestaurantByOwner,
+);
+
+// Regenerate restaurant QR codes
+router.put(
+  '/qr/regenerate',
+  authenticateUser,
+  verifyRestaurantOwnership,
+  validateRequest,
+  regenerateRestaurantQRCodes,
 );
 export default router;

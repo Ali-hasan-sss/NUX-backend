@@ -15,6 +15,7 @@ import groupsRoutes from './restaurant/restaurant.group.routes';
 import firebaseRoutes from './common/firebase.routes';
 import adscommonRoutes from './common/ads.routes';
 import notificationsRoutes from './common/notification.routes';
+import uploadRoutes from './common/upload.routes';
 
 const router = Router();
 
@@ -34,4 +35,5 @@ router.use('/groups', groupsRoutes);
 router.use('/ads', adscommonRoutes);
 router.use('/firebase', firebaseRoutes);
 router.use('/notifications', notificationsRoutes);
+router.use('/uploadFile', uploadRoutes);
 export default router;

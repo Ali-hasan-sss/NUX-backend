@@ -100,12 +100,12 @@ export const createPackage = async (req: Request, res: Response) => {
     isPublic = true,
   } = req.body;
 
-  // Check current package count (maximum 5)
+  // Check current package count (maximum 10)
   const packageCount = await prisma.topUpPackage.count({ where: { restaurantId } });
-  if (packageCount >= 5) {
+  if (packageCount >= 10) {
     return errorResponse(
       res,
-      'Cannot create more than 5 packages. Delete an existing package first.',
+      'Cannot create more than 10 packages. Delete an existing package first.',
       400,
     );
   }

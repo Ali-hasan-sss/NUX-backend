@@ -79,6 +79,13 @@ export const createGroup = async (req: Request, res: Response) => {
       data: { name, description, ownerId },
     });
 
+    // mark restaurant as group member/owner
+    try {
+      await prisma.restaurant.update({ where: { id: ownerId }, data: { isGroupMember: true } });
+    } catch (e) {
+      console.error('Failed to update isGroupMember for owner:', e);
+    }
+
     return successResponse(res, 'Group created successfully', group);
   } catch (error) {
     console.error(error);
@@ -576,6 +583,15 @@ export const respondJoinRequest = async (req: Request, res: Response) => {
         return errorResponse(res, 'This restaurant is already a member of another group', 400);
 
       await prisma.groupMembership.create({ data: { groupId: request.groupId, restaurantId } });
+      // mark restaurant as group member
+      try {
+        await prisma.restaurant.update({
+          where: { id: restaurantId },
+          data: { isGroupMember: true },
+        });
+      } catch (e) {
+        console.error('Failed to update isGroupMember for member:', e);
+      }
     }
 
     const updated = await prisma.groupJoinRequest.update({
