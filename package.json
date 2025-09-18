@@ -8,6 +8,7 @@
     "dev:https": "tsnd --respawn --transpile-only src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
+    "postinstall": "prisma generate",
     "seed": "ts-node prisma/seed.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate deploy",
