@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "tsnd --respawn --transpile-only src/index.ts",
+    "dev:https": "tsnd --respawn --transpile-only src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "seed": "ts-node prisma/seed.ts",
@@ -42,6 +43,7 @@
     "node-cron": "^4.2.1",
     "nodemailer": "^7.0.5",
     "prisma": "^6.13.0",
+    "stripe": "^18.5.0",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1",
     "ts-jest": "^29.4.1",

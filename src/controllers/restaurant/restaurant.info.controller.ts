@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client';
 import { Request, Response } from 'express';
 import { errorResponse, successResponse } from '../../utils/response';
 import { randomUUID } from 'crypto';
+import { getRestaurantPermissions } from '../../utils/permissions';
 
 const prisma = new PrismaClient();
 
@@ -36,6 +37,7 @@ export const getRestaurantByOwner = async (req: Request, res: Response) => {
         qrCode_drink: true,
         qrCode_meal: true,
         isSubscriptionActive: true,
+        isActive: true,
         createdAt: true,
         groupMemberships: {
           select: {
@@ -72,9 +74,14 @@ export const getRestaurantByOwner = async (req: Request, res: Response) => {
         : null;
 
     const { groupMemberships, ownedGroups, ...rest } = restaurant as any;
+
+    // Get restaurant permissions
+    const permissions = await getRestaurantPermissions(restaurant.id);
+
     return successResponse(res, 'Restaurant fetched successfully', {
       ...rest,
       group: groupInfo,
+      permissions,
     });
   } catch (error) {
     console.error(error);
@@ -107,6 +114,9 @@ export const getRestaurantByOwner = async (req: Request, res: Response) => {
  *                 type: number
  *               longitude:
  *                 type: number
+ *               isActive:
+ *                 type: boolean
+ *                 description: Restaurant active status (for temporary closure)
  *     responses:
  *       200:
  *         description: Restaurant updated successfully
@@ -115,7 +125,7 @@ export const getRestaurantByOwner = async (req: Request, res: Response) => {
  */
 export const updateRestaurantByOwner = async (req: Request, res: Response) => {
   try {
-    const { name, address, latitude, longitude, logo } = req.body;
+    const { name, address, latitude, longitude, logo, isActive } = req.body;
 
     const restaurant = await prisma.restaurant.findUnique({
       where: { userId: req.user!.id },
@@ -133,6 +143,7 @@ export const updateRestaurantByOwner = async (req: Request, res: Response) => {
         latitude: latitude ?? restaurant.latitude,
         longitude: longitude ?? restaurant.longitude,
         logo: logo ?? restaurant.logo,
+        isActive: isActive !== undefined ? isActive : restaurant.isActive,
       },
       select: {
         id: true,
@@ -147,6 +158,7 @@ export const updateRestaurantByOwner = async (req: Request, res: Response) => {
         qrCode_drink: true,
         qrCode_meal: true,
         isSubscriptionActive: true,
+        isActive: true,
         createdAt: true,
       },
     });
@@ -199,6 +211,7 @@ export const regenerateRestaurantQRCodes = async (req: Request, res: Response) =
         qrCode_drink: true,
         qrCode_meal: true,
         isSubscriptionActive: true,
+        isActive: true,
         createdAt: true,
       },
     });

@@ -48,6 +48,7 @@ model Restaurant {
   PayPal_Email         Json?
   paypalAccessToken    String?
   paypalRefreshToken   String?
+  stripeCustomerId     String?
   qrCode_drink         String?                 @unique
   qrCode_meal          String?                 @unique
   createdAt            DateTime                @default(now())
@@ -68,6 +69,7 @@ model Restaurant {
   topUps               TopUp[]
   TopUpPackages        TopUpPackage[]
   balances             UserRestaurantBalance[]
+  invoices             Invoice[]
 }
 
 model Plan {
@@ -80,8 +82,11 @@ model Plan {
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @default(now()) @updatedAt
   currency        String?
+  stripeProductId String?
+  stripePriceId   String?
   subscriberCount Int            @default(0)
   subscriptions   Subscription[]
+  permissions     Permission[]
 }
 
 model Subscription {
@@ -91,7 +96,7 @@ model Subscription {
   startDate      DateTime           @default(now())
   endDate        DateTime
   status         SubscriptionStatus @default(PENDING)
-  paymentId      String?
+  paymentId      String?            @unique
   paymentMethod  String?
   transactionRef String?
   createdAt      DateTime           @default(now())
@@ -99,6 +104,15 @@ model Subscription {
   paymentStatus  String?
   plan           Plan               @relation(fields: [planId], references: [id])
   restaurant     Restaurant         @relation("RestaurantSubscriptions", fields: [restaurantId], references: [id])
+  stripeSubscriptionId String?
+  stripePriceId String?
+  stripeCurrentPeriodEnd DateTime?
+  stripeCurrentPeriodStart DateTime?
+  stripeCustomerId String?
+  stripeStatus String?
+  stripePriceObject Json?
+  payment        Payment?           @relation(fields: [paymentId], references: [id])
+  invoices       Invoice[]
 
   @@index([planId, status])
   @@index([endDate])
@@ -162,12 +176,48 @@ model Payment {
   userId        String
   restaurantId  String
   amount        Float
+  currency      String?
   method        String
   status        String
-  transactionId String
+  transactionId String     @unique
+  paymentIntentId   String?
+  checkoutSessionId String?
+  receiptUrl        String?
+  provider          String?   @default("stripe")
+  paymentMethod     String?   // e.g., "CARD (VISA)", "CARD (MASTERCARD)"
   createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
   restaurant    Restaurant @relation(fields: [restaurantId], references: [id])
   user          User       @relation(fields: [userId], references: [id])
+  invoice       Invoice?
+  subscription  Subscription?
+
+  @@index([restaurantId, createdAt])
+}
+
+model Invoice {
+  id               String        @id @default(uuid())
+  restaurantId     String
+  subscriptionId   Int?
+  stripeInvoiceId  String?       @unique
+  hostedInvoiceUrl String?
+  pdfUrl           String?
+  amountDue        Float
+  amountPaid       Float?
+  currency         String
+  status           InvoiceStatus
+  periodStart      DateTime?
+  periodEnd        DateTime?
+  paymentMethod    String?       // e.g., "CARD (VISA)", "CARD (MASTERCARD)"
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  paymentId   String? @unique
+  restaurant       Restaurant    @relation(fields: [restaurantId], references: [id])
+  subscription     Subscription? @relation(fields: [subscriptionId], references: [id])
+  payment          Payment?      @relation(fields: [paymentId], references: [id])
+
+  @@index([restaurantId, createdAt])
+  @@index([subscriptionId])
 }
 
 model TopUpPackage {
@@ -323,4 +373,53 @@ enum paymentType {
 enum scanType {
   drink
   meal
+}
+
+enum InvoiceStatus {
+  PENDING
+  PAID
+  UNPAID
+  CANCELLED
+  FAILED
+}
+
+enum PermissionType {
+  // Restaurant Management
+  MANAGE_MENU
+  MANAGE_QR_CODES
+  MANAGE_GROUPS
+  MANAGE_ADS
+  MANAGE_PACKAGES
+  
+  // Customer Features
+  CUSTOMER_LOYALTY
+  CUSTOMER_NOTIFICATIONS
+  CUSTOMER_GIFTS
+  
+  // Analytics & Reports
+  VIEW_ANALYTICS
+  EXPORT_DATA
+  
+  // Advanced Features
+  CUSTOM_BRANDING
+  API_ACCESS
+  MULTI_LOCATION
+  
+  // Limits
+  MAX_MENU_ITEMS
+  MAX_ADS
+  MAX_PACKAGES
+  MAX_GROUP_MEMBERS
+}
+
+model Permission {
+  id          Int           @id @default(autoincrement())
+  type        PermissionType
+  value       Int?          // For numeric limits (e.g., max items)
+  isUnlimited Boolean       @default(false)
+  planId      Int
+  plan        Plan          @relation(fields: [planId], references: [id], onDelete: Cascade)
+  
+  @@unique([planId, type])
+  @@index([planId])
 }

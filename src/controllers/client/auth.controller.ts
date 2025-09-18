@@ -313,7 +313,7 @@ export const registerRestaurant = async (req: Request, res: Response) => {
         },
       });
 
-      // create subscription in the free plan
+      // create subscription in the free plan (one-time only)
       const endDate = new Date();
       endDate.setDate(endDate.getDate() + freePlan.duration);
 
@@ -325,6 +325,7 @@ export const registerRestaurant = async (req: Request, res: Response) => {
           endDate,
           status: 'ACTIVE',
           paymentStatus: 'paid',
+          paymentMethod: 'free_trial',
         },
         include: { plan: true },
       });
@@ -459,6 +460,12 @@ export const registerRestaurant = async (req: Request, res: Response) => {
 export const login = async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
+    console.log('🔐 Login attempt:', {
+      email,
+      passwordLength: password?.length,
+      origin: req.get('origin'),
+    });
+
     if (!email || !password) return errorResponse(res, 'Email and password are required', 400);
 
     // 1) جيب المستخدم فقط (بدون include لعلاقات محذوفة)
@@ -466,15 +473,24 @@ export const login = async (req: Request, res: Response) => {
       where: { email },
     });
 
-    if (!user) return errorResponse(res, 'Email address not found', 404);
+    if (!user) {
+      console.log('❌ User not found:', email);
+      return errorResponse(res, 'Email address not found', 404);
+    }
 
     if (['ADMIN'].includes(user.role)) {
+      console.log('❌ Admin trying to login via user route:', email);
       return errorResponse(res, 'Admins cannot login from this route', 403);
     }
 
     // 2) تحقق كلمة المرور
     const isPasswordValid = await comparePassword(password, user.password);
-    if (!isPasswordValid) return errorResponse(res, 'Incorrect password', 401);
+    if (!isPasswordValid) {
+      console.log('❌ Invalid password for:', email);
+      return errorResponse(res, 'Incorrect password', 401);
+    }
+
+    console.log('✅ Login successful for:', email);
 
     // 3) اصنع التوكينات وخزّن refreshToken
     const accessToken = generateAccessToken({ userId: user.id, role: user.role });

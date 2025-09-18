@@ -9,6 +9,7 @@ import {
 import { authenticateUser } from '../../middlewares/Auth';
 import { validateRequest } from '../../middlewares/security';
 import { verifyRestaurantOwnership } from '../../middlewares/Authorization';
+import { canManageAds } from '../../middlewares/permissions';
 
 const router = Router();
 
@@ -20,6 +21,7 @@ router.post(
   '/',
   authenticateUser,
   verifyRestaurantOwnership,
+  canManageAds,
   body('title').isString().trim().isLength({ min: 2, max: 100 }),
   body('description').optional().isString().isLength({ max: 500 }),
   body('image').isString().trim(),
@@ -36,6 +38,7 @@ router.put(
   '/:id',
   authenticateUser,
   verifyRestaurantOwnership,
+  canManageAds,
   param('id').isString(),
   body('title').optional().isString().trim(),
   body('description').optional().isString().trim(),
@@ -53,6 +56,7 @@ router.delete(
   '/:id',
   authenticateUser,
   verifyRestaurantOwnership,
+  canManageAds,
   param('id').isString(),
   validateRequest,
   deleteAd,

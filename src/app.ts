@@ -12,19 +12,36 @@ import {
 } from './middlewares/security';
 import swaggerRoutes from './routes/swagger.routes';
 import { checkAndUpdateSubscriptions, startSubscriptionChecker } from './jobs/subscriptionChecker';
+import { stripeWebhook } from './controllers/restaurant/subscription.controller';
 
 dotenv.config();
 
 const app = express();
-app.use(express.json());
 
 checkAndUpdateSubscriptions();
 startSubscriptionChecker();
 
-app.use(cors({ origin: true, credentials: true }));
-app.use(helmet());
+// CORS with logging
+// app.use((req, res, next) => {
+//   const origin = req.get('Origin');
+//   console.log(`📡 Request from origin: ${origin || 'no-origin'} to ${req.method} ${req.path}`);
+//   next();
+// });
+
+// app.use(cors({ origin: true, credentials: true }));
+// app.use(helmet());
 app.use(morgan('dev'));
+
+// Webhook route must be defined BEFORE any JSON parsing middleware
+app.post(
+  '/api/restaurants/subscription/webhook',
+  express.raw({ type: 'application/json' }),
+  stripeWebhook,
+);
+
+// Apply JSON parsing to all other routes
 app.use(express.json());
+
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 // security + sanitizers
@@ -34,6 +51,16 @@ app.use(xssSanitizerMiddleware);
 app.use('/', swaggerRoutes);
 // rate limiter (global)
 app.use(generalRateLimiter);
+
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'OK',
+    message: 'Backend is running',
+    timestamp: new Date().toISOString(),
+    cors: 'enabled',
+  });
+});
 
 app.use('/api', routes);
 

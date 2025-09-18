@@ -84,7 +84,8 @@ export const getAllSubscriptions = async (req: Request, res: Response) => {
     const skip = (pageNumber - 1) * size;
 
     // Fetch subscriptions with pagination and include related restaurant and plan
-    const items = await prisma.subscription.findMany({
+    // Group by restaurant and plan to get only one subscription per plan per restaurant
+    const allSubscriptions = await prisma.subscription.findMany({
       where,
       include: {
         restaurant: {
@@ -92,13 +93,27 @@ export const getAllSubscriptions = async (req: Request, res: Response) => {
         },
         plan: true,
       },
-      skip,
-      take: size,
       orderBy: { createdAt: 'desc' },
     });
 
-    // Count total subscriptions matching the filter
-    const totalItems = await prisma.subscription.count({ where });
+    // Group by restaurantId and planId to get the latest subscription for each plan
+    const groupedSubscriptions = new Map();
+    allSubscriptions.forEach((sub) => {
+      const key = `${sub.restaurantId}-${sub.planId}`;
+      if (
+        !groupedSubscriptions.has(key) ||
+        sub.createdAt > groupedSubscriptions.get(key).createdAt
+      ) {
+        groupedSubscriptions.set(key, sub);
+      }
+    });
+
+    const items = Array.from(groupedSubscriptions.values())
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .slice(skip, skip + size);
+
+    // Count total unique subscriptions (one per plan per restaurant)
+    const totalItems = groupedSubscriptions.size;
     const totalPages = Math.ceil(totalItems / size);
 
     // Calculate statistics for different statuses
@@ -271,27 +286,34 @@ export const activateSubscription = async (req: Request, res: Response) => {
     const plan = await prisma.plan.findUnique({ where: { id: Number(planId) } });
     if (!plan) return errorResponse(res, 'Plan not found', 404);
 
+    // Check if it's a free plan - prevent admin from activating free plans
+    if (plan.title.toLowerCase().includes('free') || plan.price === 0) {
+      return errorResponse(res, 'Free plans cannot be activated by admin', 400);
+    }
+
+    // Find existing subscription for the same plan
     const existingSub = await prisma.subscription.findFirst({
       where: {
         restaurantId,
         planId: plan.id,
-        endDate: { gte: new Date() },
       },
+      orderBy: { createdAt: 'desc' },
     });
 
     let subscription;
 
     if (existingSub) {
-      // تمديد أو إعادة تفعيل الاشتراك الحالي
+      // Extend existing subscription for the same plan
       const newEndDate = new Date(existingSub.endDate);
-      newEndDate.setMonth(newEndDate.getMonth() + plan.duration);
+      newEndDate.setDate(newEndDate.getDate() + plan.duration);
 
       subscription = await prisma.subscription.update({
         where: { id: existingSub.id },
         data: {
           endDate: newEndDate,
-          status: 'ACTIVE', // إعادة تفعيل حتى لو كان منتهي/ملغي
+          status: 'ACTIVE',
           paymentStatus: 'paid',
+          paymentMethod: 'admin_activation',
         },
         include: {
           restaurant: { include: { owner: true } },
@@ -299,9 +321,9 @@ export const activateSubscription = async (req: Request, res: Response) => {
         },
       });
     } else {
-      // إنشاء اشتراك جديد
+      // Create new subscription for different plan
       const endDate = new Date();
-      endDate.setMonth(endDate.getMonth() + plan.duration);
+      endDate.setDate(endDate.getDate() + plan.duration);
 
       subscription = await prisma.subscription.create({
         data: {
@@ -311,6 +333,7 @@ export const activateSubscription = async (req: Request, res: Response) => {
           endDate,
           status: 'ACTIVE',
           paymentStatus: 'paid',
+          paymentMethod: 'admin_activation',
         },
         include: {
           restaurant: { include: { owner: true } },
@@ -319,7 +342,7 @@ export const activateSubscription = async (req: Request, res: Response) => {
       });
     }
 
-    // تحديث حالة المطعم
+    // Update restaurant status
     await prisma.restaurant.update({
       where: { id: restaurantId },
       data: {

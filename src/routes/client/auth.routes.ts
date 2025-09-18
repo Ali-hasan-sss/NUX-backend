@@ -42,6 +42,7 @@ router.post(
 router.post(
   '/registerRestaurant',
   xssSanitizerMiddleware,
+  generalRateLimiter,
   [
     body('email').trim().normalizeEmail().isEmail().withMessage('Please provide a valid email'),
     body('password')
