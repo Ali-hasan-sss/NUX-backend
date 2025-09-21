@@ -17,24 +17,12 @@ import xss from 'xss';
  * - errorHandler                    -> global error handler (prints server-side, hides details from client)
  */
 
-// CORS options (adjust origin to your frontend domain)
+// CORS options - Allow all origins for development and deployment
 export const corsOptions = {
-  origin: (origin: any, callback: any) => {
-    // allow requests with no origin like mobile apps or curl
-    if (!origin) return callback(null, true);
-    const allowed = [
-      'https://localhost:3000',
-      'https://192.168.1.6:3000',
-      'https://10.120.250.157:3000',
-      'https://nux-frondend-nextjs.vercel.app',
-    ];
-    if (allowed.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
+  origin: true, // Allow all origins
   credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
 };
 
 export const securityMiddleware = (app: any) => {

@@ -21,8 +21,8 @@ const app = express();
 checkAndUpdateSubscriptions();
 startSubscriptionChecker();
 
-// app.use(cors({ origin: true, credentials: true }));
-// app.use(helmet());
+app.use(cors({ origin: true, credentials: true }));
+app.use(helmet());
 app.use(morgan('dev'));
 
 // Webhook route must be defined BEFORE any JSON parsing middleware
