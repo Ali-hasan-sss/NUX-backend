@@ -41,6 +41,7 @@ export const getProfile = async (req: Request, res: Response) => {
         role: true,
         isActive: true,
         createdAt: true,
+        qrCode: true,
       },
     });
     if (!user) return errorResponse(res, 'User not found', 404);
@@ -136,6 +137,7 @@ export const updateProfile = async (req: Request, res: Response) => {
         role: true,
         isActive: true,
         emailVerified: true,
+        qrCode: true,
       },
     });
 
