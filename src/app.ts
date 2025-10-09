@@ -17,34 +17,38 @@ import { stripeWebhook } from './controllers/restaurant/subscription.controller'
 dotenv.config();
 
 const app = express();
+
+// Set trust proxy before any rate limiter usage
 app.set('trust proxy', 1);
 
+// Apply rate limiter immediately after trust proxy
+app.use(generalRateLimiter);
+
+// Check subscriptions and start the job
 checkAndUpdateSubscriptions();
 startSubscriptionChecker();
 
+// Basic middlewares
 app.use(cors({ origin: true, credentials: true }));
 app.use(helmet());
 app.use(morgan('dev'));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
 
-// Webhook route must be defined BEFORE any JSON parsing middleware
+// Security + sanitizers
+securityMiddleware(app);
+app.use(xssSanitizerMiddleware);
+
+// Webhook route must be before any JSON parsing middleware
 app.post(
   '/api/restaurants/subscription/webhook',
   express.raw({ type: 'application/json' }),
   stripeWebhook,
 );
 
-// Apply JSON parsing to all other routes
-app.use(express.json());
-
-app.use(express.urlencoded({ extended: true }));
-app.use(cookieParser());
-// security + sanitizers
-securityMiddleware(app);
-app.use(xssSanitizerMiddleware);
-
+// Documentation and Swagger
 app.use('/', swaggerRoutes);
-// rate limiter (global)
-app.use(generalRateLimiter);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
@@ -56,6 +60,7 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// All API routes
 app.use('/api', routes);
 
 export default app;
