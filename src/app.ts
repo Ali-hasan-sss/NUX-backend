@@ -18,8 +18,9 @@ dotenv.config();
 
 const app = express();
 
-// Set trust proxy before any rate limiter usage
-app.set('trust proxy', 1);
+// Set trust proxy to work with nginx/reverse proxy
+// Use number of trusted proxies (1 = only trust first proxy)
+app.set('trust proxy', ['loopback', 'linklocal', 'uniquelocal']);
 
 // Apply rate limiter immediately after trust proxy
 app.use(generalRateLimiter);

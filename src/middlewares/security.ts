@@ -1,7 +1,7 @@
 // src/middleware/security.ts
 import helmet from 'helmet';
 import cors from 'cors';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { Request, Response, NextFunction } from 'express';
 import cookieParser from 'cookie-parser';
 import { ValidationError, validationResult } from 'express-validator';
@@ -56,19 +56,12 @@ export const generalRateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, message: 'Too many requests, try again later.' },
-  // Trust proxy settings to work with reverse proxies (nginx, etc.)
-  skip: (req) => {
-    // Skip rate limiting for health check
-    return req.path === '/api/health';
-  },
+  // Skip rate limiting for health check
+  skip: (req) => req.path === '/api/health',
+  // Use the built-in IP extraction with IPv6 support
   keyGenerator: (req) => {
-    // Get real IP from x-forwarded-for header or use socket address
-    const forwarded = req.headers['x-forwarded-for'];
-    if (forwarded && typeof forwarded === 'string') {
-      const ips = forwarded.split(',');
-      return ips[0]?.trim() || 'unknown';
-    }
-    return req.ip || req.socket.remoteAddress || 'unknown';
+    const ip = req.ip || req.socket.remoteAddress || 'unknown';
+    return ipKeyGenerator(ip);
   },
 });
 
@@ -79,15 +72,10 @@ export const loginRateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, message: 'Too many login attempts. Try again later.' },
-  // Trust proxy settings
+  // Use the built-in IP extraction with IPv6 support
   keyGenerator: (req) => {
-    // Get real IP from x-forwarded-for header or use socket address
-    const forwarded = req.headers['x-forwarded-for'];
-    if (forwarded && typeof forwarded === 'string') {
-      const ips = forwarded.split(',');
-      return ips[0]?.trim() || 'unknown';
-    }
-    return req.ip || req.socket.remoteAddress || 'unknown';
+    const ip = req.ip || req.socket.remoteAddress || 'unknown';
+    return ipKeyGenerator(ip);
   },
 });
 
