@@ -1,7 +1,7 @@
 // src/middleware/security.ts
 import helmet from 'helmet';
 import cors from 'cors';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { Request, Response, NextFunction } from 'express';
 import cookieParser from 'cookie-parser';
 import { ValidationError, validationResult } from 'express-validator';
@@ -51,26 +51,23 @@ export const securityMiddleware = (app: any) => {
 
 // General global rate limiter (apply early)
 export const generalRateLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 200, // max requests per window per IP
+  windowMs: 15 * 60 * 1000, // 15 دقيقة
+  max: 200,
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, message: 'Too many requests, try again later.' },
-  // Skip rate limiting for health check
   skip: (req) => req.path === '/api/health',
-  // Disable validation to avoid trust proxy errors
-  validate: false,
+  keyGenerator: (req) => ipKeyGenerator(req.ip || req.socket.remoteAddress || 'unknown'),
 });
 
 // Login-specific limiter to block brute force
 export const loginRateLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // only 5 attempts
+  windowMs: 15 * 60 * 1000,
+  max: 5,
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, message: 'Too many login attempts. Try again later.' },
-  // Disable validation to avoid trust proxy errors
-  validate: false,
+  keyGenerator: (req) => ipKeyGenerator(req.ip || req.socket.remoteAddress || 'unknown'),
 });
 
 // Helper to check express-validator results
