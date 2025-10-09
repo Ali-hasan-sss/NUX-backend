@@ -17,6 +17,7 @@ import { stripeWebhook } from './controllers/restaurant/subscription.controller'
 dotenv.config();
 
 const app = express();
+app.set('trust proxy', true);
 
 checkAndUpdateSubscriptions();
 startSubscriptionChecker();
