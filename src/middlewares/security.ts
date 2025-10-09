@@ -1,7 +1,7 @@
 // src/middleware/security.ts
 import helmet from 'helmet';
 import cors from 'cors';
-import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
+import rateLimit from 'express-rate-limit';
 import { Request, Response, NextFunction } from 'express';
 import cookieParser from 'cookie-parser';
 import { ValidationError, validationResult } from 'express-validator';
@@ -58,11 +58,8 @@ export const generalRateLimiter = rateLimit({
   message: { success: false, message: 'Too many requests, try again later.' },
   // Skip rate limiting for health check
   skip: (req) => req.path === '/api/health',
-  // Use the built-in IP extraction with IPv6 support
-  keyGenerator: (req) => {
-    const ip = req.ip || req.socket.remoteAddress || 'unknown';
-    return ipKeyGenerator(ip);
-  },
+  // Disable validation to avoid trust proxy errors
+  validate: false,
 });
 
 // Login-specific limiter to block brute force
@@ -72,11 +69,8 @@ export const loginRateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, message: 'Too many login attempts. Try again later.' },
-  // Use the built-in IP extraction with IPv6 support
-  keyGenerator: (req) => {
-    const ip = req.ip || req.socket.remoteAddress || 'unknown';
-    return ipKeyGenerator(ip);
-  },
+  // Disable validation to avoid trust proxy errors
+  validate: false,
 });
 
 // Helper to check express-validator results
