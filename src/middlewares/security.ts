@@ -51,23 +51,52 @@ export const securityMiddleware = (app: any) => {
 
 // General global rate limiter (apply early)
 export const generalRateLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
+  windowMs: 15 * 60 * 1000,
   max: 200,
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, message: 'Too many requests, try again later.' },
   skip: (req) => req.path === '/api/health',
-  validate: false, // Disable validation to work with proxy
+  validate: false,
+  keyGenerator: (req) => {
+    const forwarded = req.headers['x-forwarded-for'];
+    let ip: string;
+
+    if (typeof forwarded === 'string') {
+      ip = forwarded.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
+    } else if (Array.isArray(forwarded)) {
+      ip = forwarded[0] ?? req.ip ?? 'unknown';
+    } else {
+      ip = req.ip ?? 'unknown';
+    }
+
+    // إزالة بادئة IPv6 (::ffff:)
+    return ip.replace('::ffff:', '') || 'unknown';
+  },
 });
 
 // Login-specific limiter to block brute force
 export const loginRateLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // only 5 attempts
+  windowMs: 15 * 60 * 1000,
+  max: 5,
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, message: 'Too many login attempts. Try again later.' },
-  validate: false, // Disable validation to work with proxy
+  validate: false,
+  keyGenerator: (req) => {
+    const forwarded = req.headers['x-forwarded-for'];
+    let ip: string;
+
+    if (typeof forwarded === 'string') {
+      ip = forwarded.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
+    } else if (Array.isArray(forwarded)) {
+      ip = forwarded[0] ?? req.ip ?? 'unknown';
+    } else {
+      ip = req.ip ?? 'unknown';
+    }
+
+    return ip.replace('::ffff:', '') || 'unknown';
+  },
 });
 
 // Helper to check express-validator results
