@@ -49,30 +49,34 @@ export const securityMiddleware = (app: any) => {
   );
 };
 
+function getClientIp(req: Request): string {
+  const forwarded = req.headers['x-forwarded-for'];
+
+  let ip: string | undefined;
+
+  if (typeof forwarded === 'string') {
+    ip = forwarded.split(',')[0]?.trim();
+  } else if (Array.isArray(forwarded)) {
+    ip = forwarded[0];
+  } else {
+    ip = req.socket?.remoteAddress;
+  }
+
+  if (!ip) ip = req.ip ?? 'unknown';
+
+  return ip.replace('::ffff:', '') || 'unknown';
+}
+
 // General global rate limiter (apply early)
 export const generalRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 200,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { success: false, message: 'Too many requests, try again later.' },
-  skip: (req) => req.path === '/api/health',
   validate: false,
-  keyGenerator: (req) => {
-    const forwarded = req.headers['x-forwarded-for'];
-    let ip: string;
-
-    if (typeof forwarded === 'string') {
-      ip = forwarded.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
-    } else if (Array.isArray(forwarded)) {
-      ip = forwarded[0] ?? req.ip ?? 'unknown';
-    } else {
-      ip = req.ip ?? 'unknown';
-    }
-
-    // إزالة بادئة IPv6 (::ffff:)
-    return ip.replace('::ffff:', '') || 'unknown';
-  },
+  keyGenerator: (req) => getClientIp(req),
+  skip: (req) => req.path === '/api/health',
+  message: { success: false, message: 'Too many requests, try again later.' },
 });
 
 // Login-specific limiter to block brute force
@@ -81,22 +85,9 @@ export const loginRateLimiter = rateLimit({
   max: 5,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { success: false, message: 'Too many login attempts. Try again later.' },
   validate: false,
-  keyGenerator: (req) => {
-    const forwarded = req.headers['x-forwarded-for'];
-    let ip: string;
-
-    if (typeof forwarded === 'string') {
-      ip = forwarded.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
-    } else if (Array.isArray(forwarded)) {
-      ip = forwarded[0] ?? req.ip ?? 'unknown';
-    } else {
-      ip = req.ip ?? 'unknown';
-    }
-
-    return ip.replace('::ffff:', '') || 'unknown';
-  },
+  keyGenerator: (req) => getClientIp(req),
+  message: { success: false, message: 'Too many login attempts. Try again later.' },
 });
 
 // Helper to check express-validator results
