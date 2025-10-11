@@ -75,9 +75,7 @@ const prisma = new PrismaClient();
  *                     refreshToken:
  *                       type: string
  *       400:
- *         description: Validation error (missing fields or invalid format)
- *       409:
- *         description: Email already taken
+ *         description: Validation error or registration failed
  *       500:
  *         description: Server error
  */
@@ -100,7 +98,7 @@ export const register = async (req: Request, res: Response) => {
 
     const existingUser = await prisma.user.findUnique({ where: { email } });
     if (existingUser) {
-      return errorResponse(res, 'Email is already taken', 409);
+      return errorResponse(res, 'Registration failed. Please check your information', 400);
     }
 
     const hashedPassword = await hashPassword(password);
@@ -233,9 +231,7 @@ export const register = async (req: Request, res: Response) => {
  *                     refreshToken:
  *                       type: string
  *       400:
- *         description: Validation error or missing fields
- *       409:
- *         description: Email already taken
+ *         description: Validation error, missing fields, or registration failed
  *       500:
  *         description: Server error
  */
@@ -269,7 +265,7 @@ export const registerRestaurant = async (req: Request, res: Response) => {
 
     const existingUser = await prisma.user.findUnique({ where: { email } });
     if (existingUser) {
-      return errorResponse(res, 'Email is already taken', 409);
+      return errorResponse(res, 'Registration failed. Please check your information', 400);
     }
 
     // hashing password
@@ -449,11 +445,7 @@ export const registerRestaurant = async (req: Request, res: Response) => {
  *       400:
  *         description: Missing email or password
  *       401:
- *         description: Incorrect password
- *       403:
- *         description: Admins are not allowed on this route
- *       404:
- *         description: Email address not found
+ *         description: Invalid email or password
  *       500:
  *         description: Server error
  */
@@ -475,19 +467,19 @@ export const login = async (req: Request, res: Response) => {
 
     if (!user) {
       console.log('❌ User not found:', email);
-      return errorResponse(res, 'Email address not found', 404);
+      return errorResponse(res, 'Invalid email or password', 401);
     }
 
     if (['ADMIN'].includes(user.role)) {
       console.log('❌ Admin trying to login via user route:', email);
-      return errorResponse(res, 'Admins cannot login from this route', 403);
+      return errorResponse(res, 'Invalid email or password', 401);
     }
 
     // 2) تحقق كلمة المرور
     const isPasswordValid = await comparePassword(password, user.password);
     if (!isPasswordValid) {
       console.log('❌ Invalid password for:', email);
-      return errorResponse(res, 'Incorrect password', 401);
+      return errorResponse(res, 'Invalid email or password', 401);
     }
 
     console.log('✅ Login successful for:', email);

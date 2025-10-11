@@ -60,11 +60,7 @@ const prisma = new PrismaClient();
  *       400:
  *         description: Missing email or password
  *       401:
- *         description: Incorrect password
- *       403:
- *         description: Only admins are allowed
- *       404:
- *         description: Email address not found
+ *         description: Invalid email or password
  *       500:
  *         description: Server error
  */
@@ -74,14 +70,14 @@ export const adminLogin = async (req: Request, res: Response) => {
     if (!email || !password) return errorResponse(res, 'Email and password required', 400);
 
     const user = await prisma.user.findUnique({ where: { email } });
-    if (!user) return errorResponse(res, 'Email not found', 404);
+    if (!user) return errorResponse(res, 'Invalid email or password', 401);
 
     if (!['ADMIN', 'SUB_ADMIN'].includes(user.role)) {
-      return errorResponse(res, 'Only admins are allowed', 403);
+      return errorResponse(res, 'Invalid email or password', 401);
     }
 
     const isPasswordValid = await comparePassword(password, user.password);
-    if (!isPasswordValid) return errorResponse(res, 'Incorrect password', 401);
+    if (!isPasswordValid) return errorResponse(res, 'Invalid email or password', 401);
 
     const accessToken = generateAccessToken({ userId: user.id, role: user.role });
     const refreshToken = generateRefreshToken({ userId: user.id, role: user.role });
