@@ -4,24 +4,21 @@ import {
   getCategoriesByQRCode,
   getItemsByCategoryForCustomer,
 } from '../../controllers/client/menuClient.controller';
-import { authenticateUser } from '../../middlewares/Auth';
 import { validateRequest } from '../../middlewares/security';
 
 const router = Router();
 
-// GET categories by QR code
+// GET categories by QR code (public - no authentication required)
 router.get(
   '/:qrCode',
-  authenticateUser,
   param('qrCode').isUUID().withMessage('Invalid QR code'),
   validateRequest,
   getCategoriesByQRCode,
 );
 
-// GET items by category
+// GET items by category (public - no authentication required)
 router.get(
   '/items/:categoryId',
-  authenticateUser,
   param('categoryId').isInt(),
   validateRequest,
   getItemsByCategoryForCustomer,

@@ -37,7 +37,7 @@ router.use('/admin/invoices', adminInvoicesRoutes);
 router.use('/admin/overview', adminOverviewRoutes);
 router.use('/client/account', accountRoutes);
 router.use('/client/balance', balanceRoutes);
-router.use('/client/menu', clientMenuRoutes);
+router.use('/customer/menu', clientMenuRoutes);
 router.use('/restaurants/ads', adsRestaurantsRoutes);
 router.use('/restaurants/menu', menuRoutes);
 router.use('/restaurants/account', restaurantAccountRoutes);
