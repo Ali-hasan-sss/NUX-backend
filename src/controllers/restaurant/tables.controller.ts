@@ -130,7 +130,7 @@ export const createTables = async (req: Request, res: Response) => {
     });
 
     const startNumber = lastTable ? lastTable.number + 1 : 1;
-    const baseUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const baseUrl = process.env.APP_BASE_URL || process.env.FRONTEND_URL || 'http://localhost:3000';
     const menuQrCode = restaurant.id; // Restaurant ID is used as menu QR code
 
     // Create tables
