@@ -21,11 +21,6 @@ dist/
 build/
 coverage/
 
-# Prisma
-prisma/migrations/
-*.db
-*.sqlite
-*.sqlite-journal
 
 # OS files
 .DS_Store
