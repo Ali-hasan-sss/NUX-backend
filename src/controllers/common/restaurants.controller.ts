@@ -84,6 +84,7 @@ const prisma = new PrismaClient();
  *         description: Internal server error
  */
 export const getAllRestaurants = async (req: Request, res: Response) => {
+  console.log('🔍 getAllRestaurants called - GET /api/restaurants');
   try {
     const page = parseInt(req.query.page as string) || 1;
     const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);

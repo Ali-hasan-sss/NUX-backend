@@ -371,6 +371,36 @@ export const getMenuItemsByCategory = async (req: Request, res: Response) => {
  *                 type: number
  *               image:
  *                 type: string
+ *               preparationTime:
+ *                 type: integer
+ *                 description: Preparation time in minutes
+ *               extras:
+ *                 type: array
+ *                 description: Array of extra objects with name, price, and calories properties
+ *                 items:
+ *                   type: object
+ *                   properties:
+ *                     name:
+ *                       type: string
+ *                     price:
+ *                       type: number
+ *                     calories:
+ *                       type: integer
+ *               discountType:
+ *                 type: string
+ *                 enum: [PERCENTAGE, AMOUNT]
+ *               discountValue:
+ *                 type: number
+ *               allergies:
+ *                 type: array
+ *                 description: Array of allergy strings (e.g., ["Gluten", "Dairy"])
+ *                 items:
+ *                   type: string
+ *               calories:
+ *                 type: integer
+ *               kitchenSectionId:
+ *                 type: integer
+ *                 description: ID of the kitchen section this item belongs to
  *     responses:
  *       200:
  *         description: Menu item created successfully
@@ -392,7 +422,19 @@ export const createMenuItem = async (req: Request, res: Response) => {
     if (!categoryId)
       return res.status(400).json({ success: false, message: 'Category ID is required' });
 
-    const { title, description, price, image } = req.body;
+    const {
+      title,
+      description,
+      price,
+      image,
+      preparationTime,
+      extras,
+      discountType,
+      discountValue,
+      allergies,
+      calories,
+      kitchenSectionId,
+    } = req.body;
 
     // Verify category exists and belongs to user's restaurant
     const category = await prisma.menuCategory.findUnique({
@@ -407,14 +449,57 @@ export const createMenuItem = async (req: Request, res: Response) => {
         .json({ success: false, message: 'You are not the owner of this restaurant' });
     }
 
+    // Verify kitchen section if provided
+    if (kitchenSectionId) {
+      const kitchenSection = await (prisma as any).kitchenSection.findUnique({
+        where: { id: parseInt(kitchenSectionId) },
+        include: { restaurant: true },
+      });
+
+      if (!kitchenSection) {
+        return res.status(404).json({ success: false, message: 'Kitchen section not found' });
+      }
+      if (kitchenSection.restaurant.userId !== userId) {
+        return res
+          .status(403)
+          .json({ success: false, message: 'You are not the owner of this kitchen section' });
+      }
+    }
+
+    // Build data object with new fields
+    const itemData: any = {
+      categoryId: parseInt(categoryId),
+      title,
+      description,
+      price,
+      image,
+    };
+
+    // Add optional fields only if they are provided
+    if (preparationTime !== undefined) {
+      itemData.preparationTime = preparationTime ? parseInt(preparationTime) : null;
+    }
+    if (extras !== undefined) {
+      itemData.extras = extras ? extras : null;
+    }
+    if (discountType !== undefined) {
+      itemData.discountType = discountType || null;
+    }
+    if (discountValue !== undefined) {
+      itemData.discountValue = discountValue ? parseFloat(discountValue) : null;
+    }
+    if (allergies !== undefined) {
+      itemData.allergies = allergies || [];
+    }
+    if (calories !== undefined) {
+      itemData.calories = calories ? parseInt(calories) : null;
+    }
+    if (kitchenSectionId !== undefined) {
+      itemData.kitchenSectionId = kitchenSectionId ? parseInt(kitchenSectionId) : null;
+    }
+
     const item = await prisma.menuItem.create({
-      data: {
-        categoryId: parseInt(categoryId),
-        title,
-        description,
-        price,
-        image,
-      },
+      data: itemData,
     });
 
     res.json({ success: true, data: item });
@@ -454,6 +539,36 @@ export const createMenuItem = async (req: Request, res: Response) => {
  *                 type: number
  *               image:
  *                 type: string
+ *               preparationTime:
+ *                 type: integer
+ *                 description: Preparation time in minutes
+ *               extras:
+ *                 type: array
+ *                 description: Array of extra objects with name, price, and calories properties
+ *                 items:
+ *                   type: object
+ *                   properties:
+ *                     name:
+ *                       type: string
+ *                     price:
+ *                       type: number
+ *                     calories:
+ *                       type: integer
+ *               discountType:
+ *                 type: string
+ *                 enum: [PERCENTAGE, AMOUNT]
+ *               discountValue:
+ *                 type: number
+ *               allergies:
+ *                 type: array
+ *                 description: Array of allergy strings (e.g., ["Gluten", "Dairy"])
+ *                 items:
+ *                   type: string
+ *               calories:
+ *                 type: integer
+ *               kitchenSectionId:
+ *                 type: integer
+ *                 description: ID of the kitchen section this item belongs to
  *     responses:
  *       200:
  *         description: Menu item updated successfully
@@ -474,7 +589,19 @@ export const updateMenuItem = async (req: Request, res: Response) => {
     const { itemId } = req.params;
     if (!itemId) return res.status(400).json({ success: false, message: 'Item ID is required' });
 
-    const { title, description, price, image } = req.body;
+    const {
+      title,
+      description,
+      price,
+      image,
+      preparationTime,
+      extras,
+      discountType,
+      discountValue,
+      allergies,
+      calories,
+      kitchenSectionId,
+    } = req.body;
 
     // Verify item exists and belongs to user's restaurant
     const item = await prisma.menuItem.findUnique({
@@ -489,9 +616,43 @@ export const updateMenuItem = async (req: Request, res: Response) => {
         .json({ success: false, message: 'You are not the owner of this restaurant' });
     }
 
+    // Verify kitchen section if provided
+    if (kitchenSectionId) {
+      const kitchenSection = await (prisma as any).kitchenSection.findUnique({
+        where: { id: parseInt(kitchenSectionId) },
+        include: { restaurant: true },
+      });
+
+      if (!kitchenSection) {
+        return res.status(404).json({ success: false, message: 'Kitchen section not found' });
+      }
+      if (kitchenSection.restaurant.userId !== userId) {
+        return res
+          .status(403)
+          .json({ success: false, message: 'You are not the owner of this kitchen section' });
+      }
+    }
+
+    // Build update data object
+    const updateData: any = {};
+    if (title !== undefined) updateData.title = title;
+    if (description !== undefined) updateData.description = description;
+    if (price !== undefined) updateData.price = price;
+    if (image !== undefined) updateData.image = image;
+    if (preparationTime !== undefined)
+      updateData.preparationTime = preparationTime ? parseInt(preparationTime) : null;
+    if (extras !== undefined) updateData.extras = extras;
+    if (discountType !== undefined) updateData.discountType = discountType || null;
+    if (discountValue !== undefined)
+      updateData.discountValue = discountValue ? parseFloat(discountValue) : null;
+    if (allergies !== undefined) updateData.allergies = allergies || [];
+    if (calories !== undefined) updateData.calories = calories ? parseInt(calories) : null;
+    if (kitchenSectionId !== undefined)
+      updateData.kitchenSectionId = kitchenSectionId ? parseInt(kitchenSectionId) : null;
+
     const updatedItem = await prisma.menuItem.update({
       where: { id: parseInt(itemId) },
-      data: { title, description, price, image },
+      data: updateData,
     });
 
     res.json({ success: true, data: updatedItem });

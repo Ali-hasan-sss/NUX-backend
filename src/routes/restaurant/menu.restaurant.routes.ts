@@ -11,6 +11,7 @@ import {
   deleteMenuItem,
   getMenuItemsByCategory,
 } from '../../controllers/restaurant/menu.controller';
+import { seedMenuData } from '../../controllers/restaurant/seed.controller';
 import { validateRequest } from '../../middlewares/security';
 import { authenticateUser } from '../../middlewares/Auth';
 
@@ -57,6 +58,13 @@ router.post(
   body('description').optional().isString(),
   body('price').isFloat({ gt: 0 }),
   body('image').optional().isString().isURL().withMessage(' inviled image url'),
+  body('preparationTime').optional().isInt({ min: 0 }),
+  body('extras').optional().isArray(),
+  body('discountType').optional().isIn(['PERCENTAGE', 'AMOUNT']),
+  body('discountValue').optional().isFloat({ min: 0 }),
+  body('allergies').optional().isArray(),
+  body('calories').optional().isInt({ min: 0 }),
+  body('kitchenSectionId').optional().isInt(),
   validateRequest,
   createMenuItem,
 );
@@ -69,6 +77,13 @@ router.put(
   body('description').optional().isString(),
   body('price').optional().isFloat({ gt: 0 }),
   body('image').optional().isString().isURL().withMessage(' inviled image url'),
+  body('preparationTime').optional().isInt({ min: 0 }),
+  body('extras').optional().isArray(),
+  body('discountType').optional().isIn(['PERCENTAGE', 'AMOUNT']),
+  body('discountValue').optional().isFloat({ min: 0 }),
+  body('allergies').optional().isArray(),
+  body('calories').optional().isInt({ min: 0 }),
+  body('kitchenSectionId').optional().isInt(),
   validateRequest,
   updateMenuItem,
 );
@@ -80,5 +95,8 @@ router.delete(
   validateRequest,
   deleteMenuItem,
 );
+
+// Seed sample menu data
+router.post('/seed', authenticateUser, seedMenuData);
 
 export default router;

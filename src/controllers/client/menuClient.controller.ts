@@ -81,7 +81,19 @@ export const getItemsByCategoryForCustomer = async (req: Request, res: Response)
 
     const category = await prisma.menuCategory.findUnique({
       where: { id: parseInt(categoryId) },
-      include: { items: true },
+      include: {
+        items: {
+          include: {
+            kitchenSection: {
+              select: {
+                id: true,
+                name: true,
+                description: true,
+              },
+            },
+          },
+        },
+      },
     });
 
     if (!category) return res.status(404).json({ success: false, message: 'Category not found' });

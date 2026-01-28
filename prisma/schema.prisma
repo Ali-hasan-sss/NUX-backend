@@ -59,6 +59,8 @@ model Restaurant {
   gifts                Gift[]
   groupMemberships     GroupMembership[]
   menuCategories       MenuCategory[]
+  kitchenSections      KitchenSection[]        @relation("RestaurantKitchenSections")
+  tables               Table[]
   payments             Payment[]
   purchases            Purchase[]
   owner                User                    @relation(fields: [userId], references: [id])
@@ -70,6 +72,7 @@ model Restaurant {
   TopUpPackages        TopUpPackage[]
   balances             UserRestaurantBalance[]
   invoices             Invoice[]
+  orders               Order[]
 }
 
 model Plan {
@@ -90,29 +93,29 @@ model Plan {
 }
 
 model Subscription {
-  id             Int                @id @default(autoincrement())
-  restaurantId   String
-  planId         Int
-  startDate      DateTime           @default(now())
-  endDate        DateTime
-  status         SubscriptionStatus @default(PENDING)
-  paymentId      String?            @unique
-  paymentMethod  String?
-  transactionRef String?
-  createdAt      DateTime           @default(now())
-  updatedAt      DateTime           @default(now()) @updatedAt
-  paymentStatus  String?
-  plan           Plan               @relation(fields: [planId], references: [id])
-  restaurant     Restaurant         @relation("RestaurantSubscriptions", fields: [restaurantId], references: [id])
-  stripeSubscriptionId String?
-  stripePriceId String?
-  stripeCurrentPeriodEnd DateTime?
+  id                       Int                @id @default(autoincrement())
+  restaurantId             String
+  planId                   Int
+  startDate                DateTime           @default(now())
+  endDate                  DateTime
+  status                   SubscriptionStatus @default(PENDING)
+  paymentId                String?            @unique
+  paymentMethod            String?
+  transactionRef           String?
+  createdAt                DateTime           @default(now())
+  updatedAt                DateTime           @default(now()) @updatedAt
+  paymentStatus            String?
+  plan                     Plan               @relation(fields: [planId], references: [id])
+  restaurant               Restaurant         @relation("RestaurantSubscriptions", fields: [restaurantId], references: [id])
+  stripeSubscriptionId     String?
+  stripePriceId            String?
+  stripeCurrentPeriodEnd   DateTime?
   stripeCurrentPeriodStart DateTime?
-  stripeCustomerId String?
-  stripeStatus String?
-  stripePriceObject Json?
-  payment        Payment?           @relation(fields: [paymentId], references: [id])
-  invoices       Invoice[]
+  stripeCustomerId         String?
+  stripeStatus             String?
+  stripePriceObject        Json?
+  payment                  Payment?           @relation(fields: [paymentId], references: [id])
+  invoices                 Invoice[]
 
   @@index([planId, status])
   @@index([endDate])
@@ -172,25 +175,25 @@ model Purchase {
 }
 
 model Payment {
-  id            String     @id @default(uuid())
-  userId        String
-  restaurantId  String
-  amount        Float
-  currency      String?
-  method        String
-  status        String
-  transactionId String     @unique
+  id                String        @id @default(uuid())
+  userId            String
+  restaurantId      String
+  amount            Float
+  currency          String?
+  method            String
+  status            String
+  transactionId     String        @unique
   paymentIntentId   String?
   checkoutSessionId String?
   receiptUrl        String?
-  provider          String?   @default("stripe")
-  paymentMethod     String?   // e.g., "CARD (VISA)", "CARD (MASTERCARD)"
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
-  restaurant    Restaurant @relation(fields: [restaurantId], references: [id])
-  user          User       @relation(fields: [userId], references: [id])
-  invoice       Invoice?
-  subscription  Subscription?
+  provider          String?       @default("stripe")
+  paymentMethod     String? // e.g., "CARD (VISA)", "CARD (MASTERCARD)"
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  restaurant        Restaurant    @relation(fields: [restaurantId], references: [id])
+  user              User          @relation(fields: [userId], references: [id])
+  invoice           Invoice?
+  subscription      Subscription?
 
   @@index([restaurantId, createdAt])
 }
@@ -208,10 +211,10 @@ model Invoice {
   status           InvoiceStatus
   periodStart      DateTime?
   periodEnd        DateTime?
-  paymentMethod    String?       // e.g., "CARD (VISA)", "CARD (MASTERCARD)"
+  paymentMethod    String? // e.g., "CARD (VISA)", "CARD (MASTERCARD)"
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
-  paymentId   String? @unique
+  paymentId        String?       @unique
   restaurant       Restaurant    @relation(fields: [restaurantId], references: [id])
   subscription     Subscription? @relation(fields: [subscriptionId], references: [id])
   payment          Payment?      @relation(fields: [paymentId], references: [id])
@@ -339,16 +342,114 @@ model MenuCategory {
   @@index([restaurantId])
 }
 
+model KitchenSection {
+  id           Int        @id @default(autoincrement())
+  restaurantId String
+  name         String
+  description  String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @default(now()) @updatedAt
+  restaurant   Restaurant @relation("RestaurantKitchenSections", fields: [restaurantId], references: [id], onDelete: Cascade)
+  items        MenuItem[]
+
+  @@unique([restaurantId, name])
+  @@index([restaurantId])
+}
+
 model MenuItem {
-  id          Int          @id @default(autoincrement())
-  categoryId  Int
-  title       String
-  description String?
-  price       Float
-  image       String?
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @default(now()) @updatedAt
-  category    MenuCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  id               Int             @id @default(autoincrement())
+  categoryId       Int
+  kitchenSectionId Int?
+  title            String
+  description      String?
+  price            Float
+  image            String?
+  preparationTime  Int? // Preparation time in minutes
+  extras           Json? // Array of extra objects: [{ name, price, calories }]
+  discountType     DiscountType?
+  discountValue    Float?
+  allergies        String[]        @default([]) // Array of allergy strings (e.g., ["Gluten", "Dairy"])
+  calories         Int?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @default(now()) @updatedAt
+  category         MenuCategory    @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  kitchenSection   KitchenSection? @relation(fields: [kitchenSectionId], references: [id], onDelete: SetNull)
+
+  @@index([categoryId])
+  @@index([kitchenSectionId])
+}
+
+model Table {
+  id            Int        @id @default(autoincrement())
+  restaurantId  String
+  name          String
+  number        Int
+  qrCode        String     @unique
+  isActive      Boolean    @default(true)
+  isSessionOpen Boolean    @default(false)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @default(now()) @updatedAt
+  restaurant    Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  orders        Order[]
+
+  @@unique([restaurantId, number])
+  @@index([restaurantId])
+  @@index([qrCode])
+}
+
+enum OrderType {
+  ON_TABLE   // In restaurant, eat at table
+  TAKE_AWAY  // To go / take away
+}
+
+model Order {
+  id            Int         @id @default(autoincrement())
+  restaurantId  String
+  tableId       Int?
+  tableNumber   Int?        // Store table number for reference even if table is deleted
+  orderType     OrderType   @default(ON_TABLE) // ON_TABLE or TAKE_AWAY
+  totalPrice    Float
+  status        OrderStatus @default(PENDING)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @default(now()) @updatedAt
+  restaurant    Restaurant  @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  table         Table?       @relation(fields: [tableId], references: [id], onDelete: SetNull)
+  items         OrderItem[]
+
+  @@index([restaurantId])
+  @@index([tableId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model OrderItem {
+  id                Int      @id @default(autoincrement())
+  orderId           Int
+  menuItemId        Int?     // Reference to menu item (can be null if item is deleted)
+  itemTitle         String   // Store item title at time of order
+  itemDescription   String?
+  itemImage         String?
+  quantity          Int
+  unitPrice         Float    // Price per unit at time of order
+  totalPrice        Float    // Total price for this item (unitPrice * quantity + extras)
+  selectedExtras    Json?    // Array of selected extras: [{ name, price, calories }]
+  notes             String?  // Customer notes for this item
+  preparationTime   Int?
+  baseCalories      Int?
+  allergies         String[] @default([])
+  kitchenSection    String?  // Kitchen section name at time of order
+  order             Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PREPARING
+  READY
+  COMPLETED
+  CANCELLED
 }
 
 enum Role {
@@ -383,6 +484,11 @@ enum InvoiceStatus {
   FAILED
 }
 
+enum DiscountType {
+  PERCENTAGE
+  AMOUNT
+}
+
 enum PermissionType {
   // Restaurant Management
   MANAGE_MENU
@@ -390,21 +496,21 @@ enum PermissionType {
   MANAGE_GROUPS
   MANAGE_ADS
   MANAGE_PACKAGES
-  
+
   // Customer Features
   CUSTOMER_LOYALTY
   CUSTOMER_NOTIFICATIONS
   CUSTOMER_GIFTS
-  
+
   // Analytics & Reports
   VIEW_ANALYTICS
   EXPORT_DATA
-  
+
   // Advanced Features
   CUSTOM_BRANDING
   API_ACCESS
   MULTI_LOCATION
-  
+
   // Limits
   MAX_MENU_ITEMS
   MAX_ADS
@@ -413,13 +519,13 @@ enum PermissionType {
 }
 
 model Permission {
-  id          Int           @id @default(autoincrement())
+  id          Int            @id @default(autoincrement())
   type        PermissionType
-  value       Int?          // For numeric limits (e.g., max items)
-  isUnlimited Boolean       @default(false)
+  value       Int? // For numeric limits (e.g., max items)
+  isUnlimited Boolean        @default(false)
   planId      Int
-  plan        Plan          @relation(fields: [planId], references: [id], onDelete: Cascade)
-  
+  plan        Plan           @relation(fields: [planId], references: [id], onDelete: Cascade)
+
   @@unique([planId, type])
   @@index([planId])
 }
