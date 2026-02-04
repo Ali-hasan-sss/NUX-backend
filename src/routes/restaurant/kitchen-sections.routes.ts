@@ -9,16 +9,21 @@ import {
 } from '../../controllers/restaurant/kitchen-sections.controller';
 import { validateRequest } from '../../middlewares/security';
 import { authenticateUser } from '../../middlewares/Auth';
+import { verifyRestaurantOwnership } from '../../middlewares/Authorization';
+import { canManageMenu } from '../../middlewares/permissions';
 
 const router = Router();
 
+router.use(authenticateUser);
+router.use(verifyRestaurantOwnership);
+router.use(canManageMenu);
+
 // Get all kitchen sections for the restaurant
-router.get('/', authenticateUser, getKitchenSections);
+router.get('/', getKitchenSections);
 
 // Create a new kitchen section
 router.post(
   '/',
-  authenticateUser,
   body('name').isString().trim().notEmpty().withMessage('Name is required'),
   body('description').optional().isString(),
   validateRequest,
@@ -28,7 +33,6 @@ router.post(
 // Update a kitchen section
 router.put(
   '/:sectionId',
-  authenticateUser,
   param('sectionId').isInt({ gt: 0 }).withMessage('Invalid section ID'),
   body('name').optional().isString().trim().notEmpty(),
   body('description').optional().isString(),
@@ -39,7 +43,6 @@ router.put(
 // Delete a kitchen section
 router.delete(
   '/:sectionId',
-  authenticateUser,
   param('sectionId').isInt({ gt: 0 }).withMessage('Invalid section ID'),
   validateRequest,
   deleteKitchenSection,

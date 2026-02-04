@@ -4,6 +4,12 @@ import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
+const getBaseUrl = () =>
+  process.env.APP_BASE_URL || process.env.FRONTEND_URL || 'http://localhost:3000';
+
+const tableQrCodeUrl = (restaurantId: string, tableNumber: number) =>
+  `${getBaseUrl()}/menu/${restaurantId}?table=${tableNumber}`;
+
 /**
  * @swagger
  * /restaurants/tables:
@@ -47,9 +53,14 @@ export const getTables = async (req: Request, res: Response) => {
       orderBy: { number: 'asc' },
     });
 
+    const data = tables.map((t) => ({
+      ...t,
+      qrCode: tableQrCodeUrl(restaurant.id, t.number),
+    }));
+
     res.json({
       success: true,
-      data: tables,
+      data,
     });
   } catch (err) {
     console.error('Error fetching tables:', err);
@@ -130,16 +141,13 @@ export const createTables = async (req: Request, res: Response) => {
     });
 
     const startNumber = lastTable ? lastTable.number + 1 : 1;
-    const baseUrl = process.env.APP_BASE_URL || 'https://www.nuxapp.de';
-    const menuQrCode = restaurant.id; // Restaurant ID is used as menu QR code
 
     // Create tables
     const tables = [];
     for (let i = 0; i < count; i++) {
       const tableNumber = startNumber + i;
       const tableName = name ? `${name} ${tableNumber}` : `Table ${tableNumber}`;
-      // QR code URL format: /menu/{restaurantId}?table={tableNumber}
-      const qrCodeUrl = `${baseUrl}/menu/${menuQrCode}?table=${tableNumber}`;
+      const qrCodeUrl = tableQrCodeUrl(restaurant.id, tableNumber);
 
       const table = await prisma.table.create({
         data: {
@@ -154,10 +162,15 @@ export const createTables = async (req: Request, res: Response) => {
       tables.push(table);
     }
 
+    const data = tables.map((t) => ({
+      ...t,
+      qrCode: tableQrCodeUrl(restaurant.id, t.number),
+    }));
+
     res.status(201).json({
       success: true,
       message: `${count} table(s) created successfully`,
-      data: tables,
+      data,
     });
   } catch (err: any) {
     console.error('Error creating tables:', err);
@@ -219,7 +232,7 @@ export const updateTable = async (req: Request, res: Response) => {
     }
 
     const { tableId } = req.params;
-    const { name, isActive } = req.body;
+    const { name, isActive, isSessionOpen } = req.body;
 
     if (!tableId) {
       return res.status(400).json({
@@ -266,6 +279,7 @@ export const updateTable = async (req: Request, res: Response) => {
     const updateData: any = {};
     if (name !== undefined) updateData.name = name;
     if (isActive !== undefined) updateData.isActive = isActive;
+    if (isSessionOpen !== undefined) updateData.isSessionOpen = isSessionOpen;
 
     const updatedTable = await prisma.table.update({
       where: { id: tableIdNum },
@@ -275,7 +289,10 @@ export const updateTable = async (req: Request, res: Response) => {
     res.json({
       success: true,
       message: 'Table updated successfully',
-      data: updatedTable,
+      data: {
+        ...updatedTable,
+        qrCode: tableQrCodeUrl(restaurant.id, updatedTable.number),
+      },
     });
   } catch (err) {
     console.error('Error updating table:', err);

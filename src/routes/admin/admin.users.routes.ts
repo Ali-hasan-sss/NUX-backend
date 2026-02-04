@@ -9,19 +9,20 @@ import {
 
 import { body, param, query } from 'express-validator';
 import { validateRequest } from '../../middlewares/security';
-import { isAdminMiddleware } from '../../middlewares/Authorization';
 import { authenticateUser } from '../../middlewares/Auth';
+import { isAdminOrSubAdmin, requirePermission } from '../../middlewares/adminPermissions';
 
 const router = Router();
 router.use(authenticateUser);
-router.use(isAdminMiddleware);
+router.use(isAdminOrSubAdmin);
+router.use(requirePermission('MANAGE_USERS'));
 
 router.get(
   '/',
   [
     query('role')
       .optional()
-      .isIn(['USER', 'RESTAURANT_OWNER', 'ADMIN'])
+      .isIn(['USER', 'RESTAURANT_OWNER', 'ADMIN', 'SUBADMIN'])
       .withMessage('Invalid role filter'),
     query('isActive').optional().isBoolean().withMessage('isActive must be true or false'),
     query('email').optional().isString().withMessage('Email filter must be a string'),
@@ -63,7 +64,7 @@ router.post(
     .withMessage('Full name must be a string')
     .isLength({ max: 100 })
     .withMessage('Full name is too long'),
-  body('role').optional().isIn(['USER', 'RESTAURANT_OWNER', 'ADMIN']).withMessage('Invalid role'),
+  body('role').optional().isIn(['USER', 'RESTAURANT_OWNER', 'ADMIN', 'SUBADMIN']).withMessage('Invalid role'),
   body('isActive').optional().isBoolean().withMessage('isActive must be a boolean'),
   validateRequest,
   createUser,
@@ -84,7 +85,7 @@ router.put(
     .withMessage('Full name must be a string')
     .isLength({ max: 100 })
     .withMessage('Full name is too long'),
-  body('role').optional().isIn(['USER', 'RESTAURANT_OWNER', 'ADMIN']).withMessage('Invalid role'),
+  body('role').optional().isIn(['USER', 'RESTAURANT_OWNER', 'ADMIN', 'SUBADMIN']).withMessage('Invalid role'),
   body('isActive').optional().isBoolean().withMessage('isActive must be a boolean'),
   validateRequest,
   updateUser,

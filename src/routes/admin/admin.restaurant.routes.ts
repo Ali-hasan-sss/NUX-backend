@@ -4,17 +4,19 @@ import { validateRequest } from '../../middlewares/security';
 import {
   getRestaurantById,
   createRestaurant,
+  createRestaurantWithOwner,
   updateRestaurant,
   deleteRestaurant,
   getAllRestaurants,
 } from '../../controllers/admin/admin.restaurant.controller';
 import { authenticateUser } from '../../middlewares/Auth';
-import { isAdminMiddleware } from '../../middlewares/Authorization';
+import { isAdminOrSubAdmin, requirePermission } from '../../middlewares/adminPermissions';
 
 const router = express.Router();
 
 router.use(authenticateUser);
-router.use(isAdminMiddleware);
+router.use(isAdminOrSubAdmin);
+router.use(requirePermission('MANAGE_RESTAURANTS'));
 
 // Get all restaurants
 router.get(
@@ -36,6 +38,36 @@ router.get(
   getAllRestaurants,
 );
 
+// Create restaurant with new owner (user + restaurant + optional plan) — must be before /:id
+router.post(
+  '/with-owner',
+  body('email').trim().normalizeEmail().isEmail().withMessage('Valid email is required'),
+  body('password')
+    .isLength({ min: 8 })
+    .withMessage('Password must be at least 8 characters')
+    .matches(/[0-9]/)
+    .withMessage('Password must contain a number')
+    .matches(/[A-Z]/)
+    .withMessage('Password must contain an uppercase letter'),
+  body('fullName').optional().isString().isLength({ max: 100 }).withMessage('Full name too long'),
+  body('name')
+    .isString()
+    .notEmpty()
+    .withMessage('Restaurant name is required')
+    .isLength({ max: 200 })
+    .withMessage('Restaurant name too long'),
+  body('address').isString().notEmpty().withMessage('Address is required'),
+  body('latitude')
+    .isFloat({ min: -90, max: 90 })
+    .withMessage('Latitude must be between -90 and 90'),
+  body('longitude')
+    .isFloat({ min: -180, max: 180 })
+    .withMessage('Longitude must be between -180 and 180'),
+  body('planId').optional().isInt({ min: 1 }).withMessage('planId must be a positive integer'),
+  validateRequest,
+  createRestaurantWithOwner,
+);
+
 // Get restaurant by ID
 router.get(
   '/:id',
@@ -44,7 +76,7 @@ router.get(
   getRestaurantById,
 );
 
-// Create a new restaurant
+// Create a new restaurant (existing user)
 router.post(
   '/',
   body('userId').isUUID().withMessage('Invalid owner user ID'),

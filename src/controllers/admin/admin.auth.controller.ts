@@ -12,7 +12,7 @@ const prisma = new PrismaClient();
  * api/auth/admin/login:
  *   post:
  *     summary: Login admin user
- *     description: Login for ADMIN and SUB_ADMIN only. Regular users cannot use this route.
+ *     description: Login for ADMIN and SUBADMIN only. Regular users cannot use this route.
  *     tags: [Auth]
  *     requestBody:
  *       required: true
@@ -72,7 +72,7 @@ export const adminLogin = async (req: Request, res: Response) => {
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) return errorResponse(res, 'Invalid email or password', 401);
 
-    if (!['ADMIN', 'SUB_ADMIN'].includes(user.role)) {
+    if (!['ADMIN', 'SUBADMIN'].includes(user.role)) {
       return errorResponse(res, 'Invalid email or password', 401);
     }
 

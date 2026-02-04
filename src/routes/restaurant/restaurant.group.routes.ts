@@ -14,14 +14,19 @@ import {
 import { authenticateUser } from '../../middlewares/Auth';
 import { validateRequest } from '../../middlewares/security';
 import { verifyRestaurantOwnership } from '../../middlewares/Authorization';
+import { canManageGroups } from '../../middlewares/permissions';
 
 const router = Router();
+
+router.use(authenticateUser);
+router.use(verifyRestaurantOwnership);
+router.use(canManageGroups);
+
 // get all join requests
-router.get('/JoinRequests', authenticateUser, verifyRestaurantOwnership, getMyJoinRequests);
+router.get('/JoinRequests', getMyJoinRequests);
 // Create group
 router.post(
   '/',
-  authenticateUser,
   body('name').isString().trim().isLength({ min: 2, max: 100 }),
   body('description').optional().isString().isLength({ max: 500 }),
   validateRequest,
@@ -31,8 +36,6 @@ router.post(
 // Update group
 router.put(
   '/:groupId',
-  authenticateUser,
-  verifyRestaurantOwnership,
   param('groupId').isUUID(),
   body('name').optional().isString().trim().isLength({ min: 2, max: 100 }),
   body('description').optional().isString().isLength({ max: 500 }),
@@ -43,8 +46,6 @@ router.put(
 // Get group details
 router.get(
   '/:groupId',
-  authenticateUser,
-  verifyRestaurantOwnership,
   param('groupId').isUUID(),
   validateRequest,
   getGroupDetails,
@@ -53,8 +54,6 @@ router.get(
 // Get group members
 router.get(
   '/members/:groupId',
-  authenticateUser,
-  verifyRestaurantOwnership,
   param('groupId').isUUID(),
   validateRequest,
   getGroupMembers,
@@ -63,8 +62,6 @@ router.get(
 // Remove restaurant from group (owner only)
 router.delete(
   '/remove',
-  authenticateUser,
-  verifyRestaurantOwnership,
   body('groupId').isUUID(),
   body('restaurantId').isUUID(),
   validateRequest,
@@ -74,8 +71,6 @@ router.delete(
 // Send join request (invite)
 router.post(
   '/invite',
-  authenticateUser,
-  verifyRestaurantOwnership,
   body('groupId').isUUID(),
   body('toRestaurantId').isUUID(),
   validateRequest,
@@ -85,8 +80,6 @@ router.post(
 // Respond to join request
 router.put(
   '/respond/:requestId',
-  authenticateUser,
-  verifyRestaurantOwnership,
   param('requestId').isInt({ gt: 0 }),
   body('status').isIn(['ACCEPTED', 'REJECTED']),
   validateRequest,

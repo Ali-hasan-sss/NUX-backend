@@ -64,8 +64,14 @@ router.delete(
 
 /**
  * @route GET /ads/my
- * @desc Get all restaurant's ads
+ * @desc Get all restaurant's ads (requires plan with MANAGE_ADS)
  */
-router.get('/my', authenticateUser, verifyRestaurantOwnership, getAdsForRestaurant);
+router.get(
+  '/my',
+  authenticateUser,
+  verifyRestaurantOwnership,
+  canManageAds,
+  getAdsForRestaurant,
+);
 
 export default router;

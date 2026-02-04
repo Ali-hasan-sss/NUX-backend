@@ -1,6 +1,12 @@
+import http from 'http';
 import app from './app';
-const PORT = process.env.PORT || 5000;
+import { initSocket } from './services/socket.service';
 
-app.listen(PORT, () => {
+const PORT = process.env.PORT || 5000;
+const httpServer = http.createServer(app);
+
+initSocket(httpServer);
+
+httpServer.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });

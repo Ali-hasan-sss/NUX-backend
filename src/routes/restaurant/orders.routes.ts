@@ -7,11 +7,15 @@ import {
 } from '../../controllers/restaurant/orders.controller';
 import { authenticateUser } from '../../middlewares/Auth';
 import { validateRequest } from '../../middlewares/security';
+import { verifyRestaurantOwnership } from '../../middlewares/Authorization';
+import { canManageOrders } from '../../middlewares/permissions';
 
 const router = Router();
 
-// All routes require authentication
+// All routes require authentication and restaurant ownership
 router.use(authenticateUser);
+router.use(verifyRestaurantOwnership);
+router.use(canManageOrders);
 
 // GET all orders
 router.get(

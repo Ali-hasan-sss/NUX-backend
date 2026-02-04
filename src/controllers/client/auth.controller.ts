@@ -7,11 +7,7 @@ import jwt from 'jsonwebtoken';
 import { REFRESH_TOKEN_SECRET } from '../../config/jwt';
 import { v4 as uuidv4 } from 'uuid';
 import { errorResponse, successResponse } from '../../utils/response';
-import {
-  sendEmailVerificationCode,
-  sendResetCodeEmail,
-  sendVerificationEmail,
-} from '../../utils/email';
+import { sendEmailVerificationCode, sendResetCodeEmail } from '../../utils/email';
 
 const prisma = new PrismaClient();
 
@@ -104,6 +100,9 @@ export const register = async (req: Request, res: Response) => {
     const hashedPassword = await hashPassword(password);
     const qrCode = uuidv4();
 
+    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const verificationExpiry = new Date(Date.now() + 10 * 60 * 1000);
+
     const user = await prisma.user.create({
       data: {
         email,
@@ -111,6 +110,8 @@ export const register = async (req: Request, res: Response) => {
         fullName: fullName || null,
         role: Role.USER,
         qrCode,
+        emailVerificationCode: verificationCode,
+        emailVerificationExpiry: verificationExpiry,
       },
     });
 
@@ -120,7 +121,11 @@ export const register = async (req: Request, res: Response) => {
       data: { refreshToken },
     });
 
-    await sendVerificationEmail(user).catch(() => {});
+    setImmediate(() => {
+      sendEmailVerificationCode(user.email, verificationCode).catch((err) => {
+        console.error('Send verification email error:', err);
+      });
+    });
 
     const accessToken = generateAccessToken({ userId: user.id, role: user.role });
 
@@ -284,6 +289,9 @@ export const registerRestaurant = async (req: Request, res: Response) => {
       return errorResponse(res, 'Free trial plan is not available', 500);
     }
 
+    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const verificationExpiry = new Date(Date.now() + 10 * 60 * 1000);
+
     // create user and restaurant and enable the free plan
     const result = await prisma.$transaction(async (prisma) => {
       const user = await prisma.user.create({
@@ -294,6 +302,8 @@ export const registerRestaurant = async (req: Request, res: Response) => {
           role: Role.RESTAURANT_OWNER,
           qrCode,
           isRestaurant: true,
+          emailVerificationCode: verificationCode,
+          emailVerificationExpiry: verificationExpiry,
         },
       });
 
@@ -349,6 +359,12 @@ export const registerRestaurant = async (req: Request, res: Response) => {
         subscription,
         tokens: { accessToken, refreshToken },
       };
+    });
+
+    setImmediate(() => {
+      sendEmailVerificationCode(result.user.email, verificationCode).catch((err) => {
+        console.error('Send verification email error (restaurant):', err);
+      });
     });
 
     // data of subscription
@@ -480,6 +496,15 @@ export const login = async (req: Request, res: Response) => {
     if (!isPasswordValid) {
       console.log('❌ Invalid password for:', email);
       return errorResponse(res, 'Invalid email or password', 401);
+    }
+
+    // 2.5) تحقق من تفعيل البريد الإلكتروني
+    if (!user.emailVerified) {
+      return res.status(403).json({
+        success: false,
+        message: 'Please verify your email first. Check your inbox for the verification code.',
+        code: 'EMAIL_NOT_VERIFIED',
+      });
     }
 
     console.log('✅ Login successful for:', email);
@@ -689,7 +714,8 @@ export const sendVerificationCode = async (req: Request, res: Response) => {
   try {
     await sendEmailVerificationCode(email, code);
   } catch (err) {
-    console.error(err);
+    console.error('Send verification code email error:', err);
+    return errorResponse(res, 'Failed to send verification email. Please try again later.', 503);
   }
 
   return successResponse(res, 'If the email exists, a verification code has been sent');
@@ -746,7 +772,10 @@ export const requestPasswordReset = async (req: Request, res: Response) => {
 
   try {
     await sendResetCodeEmail(user.email, resetCode);
-  } catch {}
+  } catch (err) {
+    console.error('Send reset code email error:', err);
+    return errorResponse(res, 'Failed to send password reset email. Please try again later.', 503);
+  }
 
   return successResponse(res, 'If the email exists, a reset code will be sent');
 };

@@ -720,3 +720,204 @@ export const deleteMenuItem = async (req: Request, res: Response) => {
     res.status(500).json({ success: false, message: 'Server error' });
   }
 };
+
+/**
+ * @swagger
+ * /restaurants/menu/discount/all:
+ *   post:
+ *     summary: Apply discount to all menu items of the restaurant
+ *     description: Sets discountType and discountValue for every menu item. Use discountValue 0 to remove discount from all items.
+ *     tags: [Menu]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [discountType, discountValue]
+ *             properties:
+ *               discountType:
+ *                 type: string
+ *                 enum: [PERCENTAGE, AMOUNT]
+ *                 description: PERCENTAGE = percent off (e.g. 10 for 10%), AMOUNT = fixed amount off in currency
+ *               discountValue:
+ *                 type: number
+ *                 minimum: 0
+ *                 description: Discount value. Use 0 to remove discount from all items.
+ *     responses:
+ *       200:
+ *         description: Discount applied successfully
+ *       400:
+ *         description: Invalid discountType or discountValue (e.g. percentage > 100)
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: Restaurant not found
+ *       500:
+ *         description: Server error
+ */
+export const applyDiscountToAllMenuItems = async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, message: 'Unauthorized' });
+
+    const restaurant = await prisma.restaurant.findUnique({
+      where: { userId },
+      select: { id: true },
+    });
+    if (!restaurant)
+      return res.status(404).json({ success: false, message: 'Restaurant not found' });
+
+    const { discountType, discountValue } = req.body;
+    if (!discountType || !['PERCENTAGE', 'AMOUNT'].includes(discountType)) {
+      return res
+        .status(400)
+        .json({ success: false, message: 'discountType must be PERCENTAGE or AMOUNT' });
+    }
+    const value = parseFloat(discountValue);
+    if (isNaN(value) || value < 0) {
+      return res
+        .status(400)
+        .json({ success: false, message: 'discountValue must be a non-negative number' });
+    }
+    if (discountType === 'PERCENTAGE' && value > 100) {
+      return res
+        .status(400)
+        .json({ success: false, message: 'Percentage discount cannot exceed 100' });
+    }
+
+    // Use 0 to remove discount (set both to null)
+    const data =
+      value === 0
+        ? { discountType: null, discountValue: null }
+        : { discountType: discountType as 'PERCENTAGE' | 'AMOUNT', discountValue: value };
+
+    const result = await prisma.menuItem.updateMany({
+      where: { category: { restaurantId: restaurant.id } },
+      data,
+    });
+
+    res.json({
+      success: true,
+      message:
+        value === 0
+          ? `Discount removed from ${result.count} item(s)`
+          : `Discount applied to ${result.count} item(s)`,
+      data: { count: result.count },
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+/**
+ * @swagger
+ * /restaurants/menu/discount/category/{categoryId}:
+ *   post:
+ *     summary: Apply discount to all menu items in a specific category
+ *     description: Sets discountType and discountValue for every item in the given category. Use discountValue 0 to remove discount from category items.
+ *     tags: [Menu]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: categoryId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: Menu category ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [discountType, discountValue]
+ *             properties:
+ *               discountType:
+ *                 type: string
+ *                 enum: [PERCENTAGE, AMOUNT]
+ *                 description: PERCENTAGE = percent off, AMOUNT = fixed amount off
+ *               discountValue:
+ *                 type: number
+ *                 minimum: 0
+ *                 description: Discount value. Use 0 to remove discount from category items.
+ *     responses:
+ *       200:
+ *         description: Discount applied successfully
+ *       400:
+ *         description: Invalid request or categoryId
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Not the owner of the restaurant
+ *       404:
+ *         description: Category not found
+ *       500:
+ *         description: Server error
+ */
+export const applyDiscountToCategory = async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, message: 'Unauthorized' });
+
+    const { categoryId } = req.params;
+    if (!categoryId)
+      return res.status(400).json({ success: false, message: 'Category ID is required' });
+
+    const category = await prisma.menuCategory.findUnique({
+      where: { id: parseInt(categoryId) },
+      include: { restaurant: true },
+    });
+    if (!category) return res.status(404).json({ success: false, message: 'Category not found' });
+    if (category.restaurant.userId !== userId) {
+      return res
+        .status(403)
+        .json({ success: false, message: 'You are not the owner of this restaurant' });
+    }
+
+    const { discountType, discountValue } = req.body;
+    if (!discountType || !['PERCENTAGE', 'AMOUNT'].includes(discountType)) {
+      return res
+        .status(400)
+        .json({ success: false, message: 'discountType must be PERCENTAGE or AMOUNT' });
+    }
+    const value = parseFloat(discountValue);
+    if (isNaN(value) || value < 0) {
+      return res
+        .status(400)
+        .json({ success: false, message: 'discountValue must be a non-negative number' });
+    }
+    if (discountType === 'PERCENTAGE' && value > 100) {
+      return res
+        .status(400)
+        .json({ success: false, message: 'Percentage discount cannot exceed 100' });
+    }
+
+    // Use 0 to remove discount (set both to null)
+    const data =
+      value === 0
+        ? { discountType: null, discountValue: null }
+        : { discountType: discountType as 'PERCENTAGE' | 'AMOUNT', discountValue: value };
+
+    const result = await prisma.menuItem.updateMany({
+      where: { categoryId: parseInt(categoryId) },
+      data,
+    });
+
+    res.json({
+      success: true,
+      message:
+        value === 0
+          ? `Discount removed from ${result.count} item(s) in category`
+          : `Discount applied to ${result.count} item(s) in category`,
+      data: { count: result.count },
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};

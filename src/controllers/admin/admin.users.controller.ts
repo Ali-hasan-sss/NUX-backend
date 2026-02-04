@@ -56,12 +56,21 @@ const prisma = new PrismaClient();
  */
 export const getAllUsers = async (req: Request, res: Response) => {
   try {
+    const currentUser = (req as any).user;
     const { role, isActive, email, pageNumber = '1', pageSize = '10' } = req.query;
 
     const filters: any = {};
 
     if (role) {
-      filters.role = role as string; // "USER" | "RESTAURANT_OWNER" | "ADMIN"
+      filters.role = role as string; // "USER" | "RESTAURANT_OWNER" | "ADMIN" | "SUBADMIN"
+    }
+
+    // Sub-admin with MANAGE_USERS must not see ADMIN users (only USER, RESTAURANT_OWNER, SUBADMIN)
+    if (currentUser?.role === 'SUBADMIN') {
+      if (role === 'ADMIN') {
+        return errorResponse(res, 'You cannot list admin users', 403);
+      }
+      filters.role = role ? (role as string) : { not: 'ADMIN' };
     }
 
     if (isActive !== undefined) {
@@ -250,6 +259,12 @@ export const getUserById = async (req: Request, res: Response) => {
       return errorResponse(res, 'User not found', 404);
     }
 
+    // Sub-admin with MANAGE_USERS must not access ADMIN users
+    const currentUser = (req as any).user;
+    if (currentUser?.role === 'SUBADMIN' && user.role === 'ADMIN') {
+      return errorResponse(res, 'You cannot access admin user details', 403);
+    }
+
     successResponse(res, 'User retrieved successfully', user, 200);
   } catch (error) {
     console.error(error);
@@ -302,7 +317,13 @@ export const getUserById = async (req: Request, res: Response) => {
 
 export const createUser = async (req: Request, res: Response) => {
   try {
+    const currentUser = (req as any).user;
     const { email, password, fullName, role, isActive } = req.body;
+
+    // Sub-admin cannot create users with role ADMIN
+    if (currentUser?.role === 'SUBADMIN' && role === 'ADMIN') {
+      return errorResponse(res, 'You cannot create admin users', 403);
+    }
 
     // Check if email already exists
     const existing = await prisma.user.findUnique({ where: { email } });
@@ -384,6 +405,7 @@ export const createUser = async (req: Request, res: Response) => {
  */
 export const updateUser = async (req: Request, res: Response) => {
   try {
+    const currentUser = (req as any).user;
     const { id } = req.params;
     const { email, password, fullName, role, isActive } = req.body;
 
@@ -396,6 +418,16 @@ export const updateUser = async (req: Request, res: Response) => {
     });
     if (!user) {
       return errorResponse(res, 'User not found', 404);
+    }
+
+    // Sub-admin cannot view, update or promote anyone to ADMIN
+    if (currentUser?.role === 'SUBADMIN') {
+      if (user.role === 'ADMIN') {
+        return errorResponse(res, 'You cannot modify admin users', 403);
+      }
+      if (role === 'ADMIN') {
+        return errorResponse(res, 'You cannot assign the admin role', 403);
+      }
     }
 
     const dataToUpdate: any = {};
@@ -461,12 +493,25 @@ export const deleteUser = async (req: Request, res: Response) => {
     if (!user) {
       return errorResponse(res, 'User not found', 404);
     }
-    if (!req.user) {
+    const currentUser = (req as any).user;
+    if (!currentUser) {
       return errorResponse(res, 'Unauthorized', 401);
     }
-    // block remove admin
-    if (req.user.id === id) {
+    // Block removing yourself
+    if (currentUser.id === id) {
       return errorResponse(res, 'Cannot delete yourself', 403);
+    }
+    // Sub-admin cannot delete any ADMIN (including the one who added them)
+    if (currentUser.role === 'SUBADMIN') {
+      if (user.role === 'ADMIN') {
+        return errorResponse(res, 'You cannot delete admin users', 403);
+      }
+      const subAdmin = await prisma.subAdmin.findUnique({
+        where: { userId: currentUser.id },
+      });
+      if (subAdmin && subAdmin.addedByUserId === id) {
+        return errorResponse(res, 'You cannot delete the admin who added you', 403);
+      }
     }
     await prisma.user.delete({ where: { id } });
 

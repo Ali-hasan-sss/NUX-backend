@@ -2,7 +2,7 @@ import express from 'express';
 import { body, param, query } from 'express-validator';
 import { validateRequest } from '../../middlewares/security';
 import { authenticateUser } from '../../middlewares/Auth';
-import { isAdminMiddleware } from '../../middlewares/Authorization';
+import { isAdminOrSubAdmin, requirePermission } from '../../middlewares/adminPermissions';
 import {
   activateSubscription,
   cancelSubscription,
@@ -12,7 +12,8 @@ import {
 const router = express.Router();
 
 router.use(authenticateUser);
-router.use(isAdminMiddleware);
+router.use(isAdminOrSubAdmin);
+router.use(requirePermission('MANAGE_SUBSCRIPTIONS'));
 
 // Get all subscriptions
 router.get(

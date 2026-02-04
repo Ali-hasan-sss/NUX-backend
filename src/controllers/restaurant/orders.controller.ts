@@ -1,6 +1,7 @@
 // src/controllers/restaurant/orders.controller.ts
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
+import { emitToRestaurant } from '../../services/socket.service';
 
 const prisma = new PrismaClient();
 
@@ -336,6 +337,9 @@ export const updateOrderStatus = async (req: Request, res: Response) => {
         },
       },
     });
+
+    // Emit order status update via WebSocket for real-time sync
+    emitToRestaurant(restaurant.id, 'order:status', updatedOrder);
 
     res.json({
       success: true,

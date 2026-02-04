@@ -8,11 +8,14 @@ import {
 } from '../../controllers/restaurant/tables.controller';
 import { authenticateUser } from '../../middlewares/Auth';
 import { validateRequest } from '../../middlewares/security';
+import { verifyRestaurantOwnership } from '../../middlewares/Authorization';
+import { canManageQRCodes } from '../../middlewares/permissions';
 
 const router = Router();
 
-// All routes require authentication
 router.use(authenticateUser);
+router.use(verifyRestaurantOwnership);
+router.use(canManageQRCodes);
 
 // GET all tables
 router.get('/', getTables);
@@ -21,13 +24,11 @@ router.get('/', getTables);
 router.post(
   '/',
   [
-    body('count')
-      .isInt({ min: 1, max: 1000 })
-      .withMessage('Count must be between 1 and 1000'),
+    body('count').isInt({ min: 1, max: 1000 }).withMessage('Count must be between 1 and 1000'),
     body('name').optional().isString().withMessage('Name must be a string'),
   ],
   validateRequest,
-  createTables
+  createTables,
 );
 
 // PUT update table
@@ -37,9 +38,10 @@ router.put(
     param('tableId').isInt().withMessage('Table ID must be an integer'),
     body('name').optional().isString().withMessage('Name must be a string'),
     body('isActive').optional().isBoolean().withMessage('isActive must be a boolean'),
+    body('isSessionOpen').optional().isBoolean().withMessage('isSessionOpen must be a boolean'),
   ],
   validateRequest,
-  updateTable
+  updateTable,
 );
 
 // DELETE table
@@ -47,7 +49,7 @@ router.delete(
   '/:tableId',
   [param('tableId').isInt().withMessage('Table ID must be an integer')],
   validateRequest,
-  deleteTable
+  deleteTable,
 );
 
 export default router;

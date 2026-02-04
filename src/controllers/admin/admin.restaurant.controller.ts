@@ -7,6 +7,149 @@ const prisma = new PrismaClient();
 
 /**
  * @swagger
+ * /api/admin/restaurants/with-owner:
+ *   post:
+ *     summary: Create a new restaurant with a new owner account in one step
+ *     description: Creates a RESTAURANT_OWNER user, a restaurant linked to that user, and optionally an active subscription for the given plan. All in a single transaction.
+ *     tags: [Restaurants]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *               - password
+ *               - name
+ *               - address
+ *               - latitude
+ *               - longitude
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 description: Owner account email
+ *               password:
+ *                 type: string
+ *                 description: Owner account password (will be hashed)
+ *               fullName:
+ *                 type: string
+ *                 description: Owner full name (optional)
+ *               name:
+ *                 type: string
+ *                 description: Restaurant name
+ *               address:
+ *                 type: string
+ *                 description: Restaurant address
+ *               latitude:
+ *                 type: number
+ *                 description: Restaurant latitude
+ *               longitude:
+ *                 type: number
+ *                 description: Restaurant longitude
+ *               planId:
+ *                 type: number
+ *                 description: Optional plan ID to activate a subscription for the restaurant
+ *     responses:
+ *       201:
+ *         description: Restaurant and owner created successfully
+ *       400:
+ *         description: Validation error or email already registered
+ *       404:
+ *         description: Plan not found (when planId is provided)
+ *       500:
+ *         description: Internal server error
+ */
+export const createRestaurantWithOwner = async (req: Request, res: Response) => {
+  try {
+    const { email, password, fullName, name, address, latitude, longitude, planId } = req.body;
+
+    if (
+      !email ||
+      !password ||
+      !name ||
+      !address ||
+      latitude === undefined ||
+      longitude === undefined
+    ) {
+      return errorResponse(
+        res,
+        'Email, password, restaurant name, address, latitude and longitude are required',
+        400,
+      );
+    }
+
+    const existingUser = await prisma.user.findUnique({ where: { email: String(email).trim() } });
+    if (existingUser) {
+      return errorResponse(res, 'Email already registered', 400);
+    }
+
+    const bcrypt = require('bcrypt');
+    const hashedPassword = await bcrypt.hash(String(password), 10);
+
+    const user = await prisma.user.create({
+      data: {
+        email: String(email).trim(),
+        password: hashedPassword,
+        fullName: fullName ? String(fullName).trim() : null,
+        role: 'RESTAURANT_OWNER',
+        isRestaurant: true,
+        isActive: true,
+        qrCode: uuidv4(),
+      },
+    });
+
+    type SubCreate = Prisma.SubscriptionCreateWithoutRestaurantInput;
+    let subscriptionCreate: SubCreate | undefined;
+    if (planId != null && planId !== '') {
+      const plan = await prisma.plan.findUnique({ where: { id: Number(planId) } });
+      if (!plan) {
+        await prisma.user.delete({ where: { id: user.id } });
+        return errorResponse(res, 'Plan not found', 404);
+      }
+      const now = new Date();
+      const endDate = new Date();
+      endDate.setDate(now.getDate() + plan.duration);
+      subscriptionCreate = {
+        startDate: now,
+        endDate,
+        status: 'ACTIVE',
+        paymentStatus: 'paid',
+        paymentMethod: 'admin_activation',
+        plan: { connect: { id: plan.id } },
+      };
+    }
+
+    const restaurant = await prisma.restaurant.create({
+      data: {
+        name: String(name).trim(),
+        address: String(address).trim(),
+        latitude: Number(latitude),
+        longitude: Number(longitude),
+        owner: { connect: { id: user.id } },
+        ...(subscriptionCreate && {
+          subscriptions: { create: subscriptionCreate },
+          isSubscriptionActive: true,
+        }),
+      },
+      include: {
+        owner: {
+          select: { id: true, email: true, fullName: true, isActive: true, createdAt: true },
+        },
+        subscriptions: { include: { plan: true } },
+      },
+    });
+
+    return successResponse(res, 'Restaurant and owner created successfully', restaurant, 201);
+  } catch (error) {
+    console.error('createRestaurantWithOwner error:', error);
+    return errorResponse(res, 'Internal server error', 500);
+  }
+};
+
+/**
+ * @swagger
  * tags:
  *   - name: Restaurants
  *     description: Admin restaurants management endpoints
@@ -402,7 +545,8 @@ export const updateRestaurant = async (req: Request, res: Response) => {
  * @swagger
  * /api/admin/restaurants/{id}:
  *   delete:
- *     summary: Delete a restaurant
+ *     summary: Delete a restaurant and its owner account
+ *     description: Deletes all dependent records (subscriptions, balances, payments, purchases, invoices), then the restaurant, then the owner user account. This action cannot be undone.
  *     tags: [Restaurants]
  *     parameters:
  *       - in: path
@@ -410,10 +554,17 @@ export const updateRestaurant = async (req: Request, res: Response) => {
  *         required: true
  *         schema:
  *           type: string
+ *           format: uuid
  *         description: Restaurant ID
  *     responses:
  *       200:
- *         description: Restaurant deleted successfully
+ *         description: Restaurant and owner deleted successfully
+ *       400:
+ *         description: Restaurant ID is required
+ *       404:
+ *         description: Restaurant not found
+ *       500:
+ *         description: Internal server error
  */
 export const deleteRestaurant = async (req: Request, res: Response) => {
   try {
@@ -424,9 +575,20 @@ export const deleteRestaurant = async (req: Request, res: Response) => {
     const restaurant = await prisma.restaurant.findUnique({ where: { id } });
     if (!restaurant) return errorResponse(res, 'Restaurant not found', 404);
 
-    await prisma.restaurant.delete({ where: { id } });
+    const ownerId = restaurant.userId;
 
-    return successResponse(res, 'Restaurant deleted successfully');
+    // Delete dependent records first (no DB cascade), then restaurant, then owner
+    await prisma.subscription.deleteMany({ where: { restaurantId: id } });
+    await prisma.userRestaurantBalance.deleteMany({
+      where: { restaurantId: id },
+    });
+    await prisma.payment.deleteMany({ where: { restaurantId: id } });
+    await prisma.purchase.deleteMany({ where: { restaurantId: id } });
+    await prisma.invoice.deleteMany({ where: { restaurantId: id } });
+    await prisma.restaurant.delete({ where: { id } });
+    await prisma.user.delete({ where: { id: ownerId } });
+
+    return successResponse(res, 'Restaurant and owner deleted successfully');
   } catch (error) {
     console.error(error);
     return errorResponse(res, 'Internal server error', 500);

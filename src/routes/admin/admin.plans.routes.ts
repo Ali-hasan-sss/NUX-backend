@@ -9,12 +9,13 @@ import {
 
 import { body, param } from 'express-validator';
 import { validateRequest } from '../../middlewares/security';
-import { isAdminMiddleware } from '../../middlewares/Authorization';
 import { authenticateUser } from '../../middlewares/Auth';
+import { isAdminOrSubAdmin, requirePermission } from '../../middlewares/adminPermissions';
 
 const router = Router();
 router.use(authenticateUser);
-router.use(isAdminMiddleware);
+router.use(isAdminOrSubAdmin);
+router.use(requirePermission('MANAGE_PLANS'));
 
 //  Get all plans
 router.get('/', getAllPlans);

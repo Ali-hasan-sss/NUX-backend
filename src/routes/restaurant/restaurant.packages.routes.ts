@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { body, param } from 'express-validator';
 import { authenticateUser } from '../../middlewares/Auth';
 import { validateRequest } from '../../middlewares/security';
+import { verifyRestaurantOwnership } from '../../middlewares/Authorization';
+import { canManagePackages } from '../../middlewares/permissions';
 import {
   createPackage,
   listPackages,
@@ -13,13 +15,16 @@ import {
 
 const router = Router();
 
+router.use(authenticateUser);
+router.use(verifyRestaurantOwnership);
+router.use(canManagePackages);
+
 // get all packages (restaurant owner or admin)
-router.get('/packages', authenticateUser, validateRequest, listPackages);
+router.get('/packages', validateRequest, listPackages);
 
 // create package (owner / admin)
 router.post(
   '/packages',
-  authenticateUser,
   body('name').isString().trim().isLength({ min: 2, max: 60 }),
   body('amount').isFloat({ gt: 0 }).withMessage('amount must be > 0'),
   body('bonus').optional().isFloat({ min: 0 }),
@@ -34,7 +39,6 @@ router.post(
 // get package by id
 router.get(
   '/packages/:id',
-  authenticateUser,
   param('id').isInt({ gt: 0 }),
   validateRequest,
   getPackageById,
@@ -43,7 +47,6 @@ router.get(
 // update package
 router.put(
   '/packages/:id',
-  authenticateUser,
   param('id').isInt({ gt: 0 }),
   body('name').optional().isString().trim().isLength({ min: 2, max: 60 }),
   body('amount').optional().isFloat({ gt: 0 }),
@@ -59,7 +62,6 @@ router.put(
 // delete package
 router.delete(
   '/packages/:id',
-  authenticateUser,
   param('id').isInt({ gt: 0 }),
   validateRequest,
   deletePackage,
@@ -68,7 +70,6 @@ router.delete(
 // topup balance
 router.post(
   '/balance/topup',
-  authenticateUser,
   [body('userQr').isString().notEmpty(), body('packageId').isInt({ gt: 0 })],
   validateRequest,
   topUpUserBalanceByRestaurant,

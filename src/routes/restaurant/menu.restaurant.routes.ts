@@ -10,19 +10,26 @@ import {
   updateMenuItem,
   deleteMenuItem,
   getMenuItemsByCategory,
+  applyDiscountToAllMenuItems,
+  applyDiscountToCategory,
 } from '../../controllers/restaurant/menu.controller';
 import { seedMenuData } from '../../controllers/restaurant/seed.controller';
 import { validateRequest } from '../../middlewares/security';
 import { authenticateUser } from '../../middlewares/Auth';
+import { verifyRestaurantOwnership } from '../../middlewares/Authorization';
+import { canManageMenu } from '../../middlewares/permissions';
 
 const router = Router();
 
+router.use(authenticateUser);
+router.use(verifyRestaurantOwnership);
+router.use(canManageMenu);
+
 // get menu for restaurant
-router.get('/', authenticateUser, getMenu);
+router.get('/', getMenu);
 
 router.post(
   '/categories',
-  authenticateUser,
   body('title').isString().notEmpty(),
   body('description').optional().isString(),
   body('image').optional().isString().isURL().withMessage(' inviled image url'),
@@ -32,7 +39,6 @@ router.post(
 
 router.put(
   '/categories/:categoryId',
-  authenticateUser,
   body('title').optional().isString(),
   body('description').optional().isString(),
   body('image').optional().isString().isURL().withMessage(' inviled image url'),
@@ -42,17 +48,34 @@ router.put(
 
 router.delete(
   '/categories/:categoryId',
-  authenticateUser,
   param('categoryId').isInt(),
   validateRequest,
   deleteCategory,
 );
 
-router.get('/items/:categoryId', authenticateUser, getMenuItemsByCategory);
+router.get('/items/:categoryId', getMenuItemsByCategory);
+
+// Apply discount to all menu items
+router.post(
+  '/discount/all',
+  body('discountType').isIn(['PERCENTAGE', 'AMOUNT']),
+  body('discountValue').isFloat({ min: 0 }),
+  validateRequest,
+  applyDiscountToAllMenuItems,
+);
+
+// Apply discount to items in a category
+router.post(
+  '/discount/category/:categoryId',
+  param('categoryId').isInt(),
+  body('discountType').isIn(['PERCENTAGE', 'AMOUNT']),
+  body('discountValue').isFloat({ min: 0 }),
+  validateRequest,
+  applyDiscountToCategory,
+);
 
 router.post(
   '/items/:categoryId',
-  authenticateUser,
   param('categoryId').isInt(),
   body('title').isString().notEmpty(),
   body('description').optional().isString(),
@@ -71,7 +94,6 @@ router.post(
 
 router.put(
   '/items/:itemId',
-  authenticateUser,
   param('itemId').isInt(),
   body('title').optional().isString(),
   body('description').optional().isString(),
@@ -90,13 +112,12 @@ router.put(
 
 router.delete(
   '/items/:itemId',
-  authenticateUser,
   param('itemId').isInt(),
   validateRequest,
   deleteMenuItem,
 );
 
 // Seed sample menu data
-router.post('/seed', authenticateUser, seedMenuData);
+router.post('/seed', seedMenuData);
 
 export default router;

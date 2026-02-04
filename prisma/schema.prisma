@@ -35,6 +35,39 @@ model User {
   StarsTransactions       StarsTransaction[]
   topUps                  TopUp[]
   balances                UserRestaurantBalance[]
+  subAdmin                SubAdmin?
+  addedSubAdmins          SubAdmin[]             @relation("AddedSubAdmins")
+}
+
+/// Sub-admin: added by main ADMIN only; has limited permissions in admin panel.
+model SubAdmin {
+  id            String                @id @default(uuid())
+  userId        String                @unique
+  addedByUserId String
+  createdAt     DateTime              @default(now())
+  user          User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  addedBy       User                  @relation("AddedSubAdmins", fields: [addedByUserId], references: [id], onDelete: Cascade)
+  permissions   SubAdminPermission[]
+
+  @@index([addedByUserId])
+}
+
+/// Permissions granted to a sub-admin (which admin panel sections they can access).
+enum SubAdminPermissionType {
+  MANAGE_USERS
+  MANAGE_PLANS
+  MANAGE_RESTAURANTS
+  MANAGE_SUBSCRIPTIONS
+}
+
+model SubAdminPermission {
+  id         Int                   @id @default(autoincrement())
+  subAdminId String
+  permission SubAdminPermissionType
+  subAdmin   SubAdmin              @relation(fields: [subAdminId], references: [id], onDelete: Cascade)
+
+  @@unique([subAdminId, permission])
+  @@index([subAdminId])
 }
 
 model Restaurant {
@@ -116,6 +149,8 @@ model Subscription {
   stripePriceObject        Json?
   payment                  Payment?           @relation(fields: [paymentId], references: [id])
   invoices                 Invoice[]
+  reminderSentAt30Days     DateTime?
+  reminderSentAt3Days      DateTime?
 
   @@index([planId, status])
   @@index([endDate])
@@ -456,6 +491,7 @@ enum Role {
   USER
   RESTAURANT_OWNER
   ADMIN
+  SUBADMIN
 }
 
 enum SubscriptionStatus {
@@ -496,6 +532,7 @@ enum PermissionType {
   MANAGE_GROUPS
   MANAGE_ADS
   MANAGE_PACKAGES
+  MANAGE_ORDERS
 
   // Customer Features
   CUSTOMER_LOYALTY

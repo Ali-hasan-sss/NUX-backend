@@ -9,6 +9,7 @@ enum PermissionType {
   MANAGE_GROUPS = 'MANAGE_GROUPS',
   MANAGE_ADS = 'MANAGE_ADS',
   MANAGE_PACKAGES = 'MANAGE_PACKAGES',
+  MANAGE_ORDERS = 'MANAGE_ORDERS',
 }
 
 const prisma = new PrismaClient();
@@ -39,10 +40,14 @@ export const checkPermission = (
       }
 
       if (!req.restaurant.isSubscriptionActive) {
-        return errorResponse(res, 'No active subscription found', 403);
+        return res.status(403).json({
+          success: false,
+          message: 'No active subscription found. Subscribe to a plan to use this feature.',
+          code: 'NO_ACTIVE_SUBSCRIPTION',
+        });
       }
 
-      // Get restaurant's active subscription with plan and permissions
+      // Get restaurant's active subscription with plan and permissions (most recent first)
       const activeSubscription = (await prisma.subscription.findFirst({
         where: {
           restaurantId: req.restaurant.id,
@@ -51,6 +56,7 @@ export const checkPermission = (
             gte: new Date(),
           },
         },
+        orderBy: { endDate: 'desc' },
         include: {
           plan: {
             include: {
@@ -61,23 +67,41 @@ export const checkPermission = (
       })) as any;
 
       if (!activeSubscription) {
-        return errorResponse(res, 'No active subscription found', 403);
+        return res.status(403).json({
+          success: false,
+          message: 'No active subscription found. Subscribe to a plan to use this feature.',
+          code: 'NO_ACTIVE_SUBSCRIPTION',
+        });
       }
 
-      // Find the specific permission
+      // Find the specific permission (compare as string in case Prisma returns enum differently)
+      const permissionStr = String(permission);
       const permissionData = activeSubscription.plan.permissions.find(
-        (p: any) => p.type === permission,
+        (p: any) => String(p.type) === permissionStr,
       );
 
       if (!permissionData) {
-        return errorResponse(res, `Permission '${permission}' not granted`, 403);
+        const planTitle = activeSubscription.plan?.title ?? `Plan #${activeSubscription.planId}`;
+        return res.status(403).json({
+          success: false,
+          message: `Your current plan (${planTitle}) does not include this feature. Upgrade your plan to use it.`,
+          code: 'PLAN_PERMISSION_REQUIRED',
+          permission,
+          currentPlanId: activeSubscription.planId,
+          currentPlanTitle: activeSubscription.plan?.title ?? null,
+        });
       }
 
       // Check limits if required
       if (checkLimit && getCurrentCount && !permissionData.isUnlimited) {
         const currentCount = await getCurrentCount(req.restaurant.id);
         if (currentCount >= (permissionData.value || 0)) {
-          return errorResponse(res, `Limit exceeded for '${permission}'`, 403);
+          return res.status(403).json({
+            success: false,
+            message: `Plan limit exceeded for this feature. Upgrade your plan for more.`,
+            code: 'PLAN_LIMIT_EXCEEDED',
+            permission,
+          });
         }
       }
 
@@ -157,6 +181,11 @@ export const canManagePackages = checkPermission(
     return await prisma.topUpPackage.count({ where: { restaurantId } });
   },
 );
+
+/**
+ * Middleware to check if restaurant can manage orders (send/receive orders from dashboard)
+ */
+export const canManageOrders = checkPermission(PermissionType.MANAGE_ORDERS, false, undefined);
 
 // Note: Other permission middlewares removed as they are not needed for current restaurant management features
 

@@ -1,6 +1,7 @@
 // src/controllers/client/order.controller.ts
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
+import { emitToRestaurant } from '../../services/socket.service';
 
 const prisma = new PrismaClient();
 
@@ -84,6 +85,40 @@ export const createOrder = async (req: Request, res: Response) => {
       });
     }
 
+    // Require restaurant to have an active plan that supports orders (MANAGE_ORDERS)
+    const activeSubscription = (await prisma.subscription.findFirst({
+      where: {
+        restaurantId: restaurantId,
+        status: 'ACTIVE',
+        endDate: { gte: new Date() },
+      },
+      orderBy: { endDate: 'desc' },
+      include: {
+        plan: { include: { permissions: true } },
+      },
+    })) as any;
+
+    if (!activeSubscription) {
+      return res.status(403).json({
+        success: false,
+        code: 'NO_ACTIVE_SUBSCRIPTION',
+        message:
+          'This restaurant does not have an active subscription. Orders are not available at the moment.',
+      });
+    }
+
+    const hasManageOrders = (activeSubscription?.plan?.permissions ?? []).some(
+      (p: any) => String(p.type) === 'MANAGE_ORDERS',
+    );
+    if (!hasManageOrders) {
+      return res.status(403).json({
+        success: false,
+        code: 'PLAN_PERMISSION_REQUIRED',
+        message:
+          'This restaurant does not have a plan that supports orders. Orders are not available at the moment.',
+      });
+    }
+
     // Find table if tableNumber is provided
     let tableId: number | null = null;
     if (tableNumber) {
@@ -95,6 +130,15 @@ export const createOrder = async (req: Request, res: Response) => {
       });
       if (table) {
         tableId = table.id;
+        // Require an active table session whenever ordering from a table (regardless of order type: at table or take away)
+        if (!table.isSessionOpen) {
+          return res.status(403).json({
+            success: false,
+            code: 'TABLE_SESSION_NOT_OPEN',
+            message:
+              'Table session is not open. Please ask the cashier to start a session for this table.',
+          });
+        }
       }
     }
 
@@ -123,7 +167,7 @@ export const createOrder = async (req: Request, res: Response) => {
               (item.price +
                 (item.selectedExtras?.reduce(
                   (sum: number, extra: any) => sum + (extra.price || 0),
-                  0
+                  0,
                 ) || 0)) *
               item.quantity,
             selectedExtras: item.selectedExtras || null,
@@ -140,6 +184,9 @@ export const createOrder = async (req: Request, res: Response) => {
         table: true,
       },
     });
+
+    // Emit new order to restaurant via WebSocket for real-time delivery
+    emitToRestaurant(restaurantId, 'order:new', order);
 
     res.status(201).json({
       success: true,

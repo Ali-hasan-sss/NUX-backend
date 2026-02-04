@@ -1,15 +1,18 @@
 import { Router } from 'express';
 import authRoutes from './client/auth.routes';
 import usersRoutes from './admin/admin.users.routes';
+import subadminsRoutes from './admin/admin.subadmins.routes';
 import adminRestaurantsRoutes from './admin/admin.restaurant.routes';
 import adminPlansRoutes from './admin/admin.plans.routes';
 import subscriptionsRoutes from './admin/admin.subscription.routes';
 import adminInvoicesRoutes from './admin/invoices.routes';
 import adminOverviewRoutes from './admin/overview.routes';
+import adminNotificationsRoutes from './admin/admin.notifications.routes';
 import accountRoutes from './client/account.routes';
 import balanceRoutes from './client/balances.route';
 import clientMenuRoutes from './client/menu.client.routes';
 import clientOrderRoutes from './client/order.routes';
+import waiterRequestRoutes from './client/waiterRequest.routes';
 import adsRestaurantsRoutes from './restaurant/restaurant.ad.routes';
 import restaurantOrdersRoutes from './restaurant/orders.routes';
 import tablesRoutes from './restaurant/tables.routes';
@@ -34,15 +37,18 @@ const router = Router();
 
 router.use('/auth', authRoutes);
 router.use('/admin/users', usersRoutes);
+router.use('/admin/subadmins', subadminsRoutes);
 router.use('/admin/restaurants', adminRestaurantsRoutes);
 router.use('/admin/plans', adminPlansRoutes);
 router.use('/admin/subscriptions', subscriptionsRoutes);
 router.use('/admin/invoices', adminInvoicesRoutes);
 router.use('/admin/overview', adminOverviewRoutes);
+router.use('/admin/notifications', adminNotificationsRoutes);
 router.use('/client/account', accountRoutes);
 router.use('/client/balance', balanceRoutes);
 router.use('/customer/menu', clientMenuRoutes);
 router.use('/customer/orders', clientOrderRoutes);
+router.use('/customer/waiter-request', waiterRequestRoutes);
 // Specific restaurant routes (must come BEFORE public routes to avoid conflicts)
 router.use('/restaurants/ads', adsRestaurantsRoutes);
 router.use('/restaurants/menu', menuRoutes);
