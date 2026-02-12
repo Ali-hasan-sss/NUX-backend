@@ -227,8 +227,8 @@ const scanQrCode = async (req, res) => {
                 data: {
                     userId,
                     restaurantId: restaurant.id,
-                    stars_meal: isMeal ? 10 : 0,
-                    stars_drink: isDrink ? 10 : 0,
+                    stars_meal: isMeal ? 1 : 0,
+                    stars_drink: isDrink ? 1 : 0,
                     balance: 0,
                 },
             });
@@ -237,8 +237,8 @@ const scanQrCode = async (req, res) => {
             balance = await prisma.userRestaurantBalance.update({
                 where: { id: balance.id },
                 data: {
-                    stars_meal: isMeal ? balance.stars_meal + 10 : balance.stars_meal,
-                    stars_drink: isDrink ? balance.stars_drink + 10 : balance.stars_drink,
+                    stars_meal: isMeal ? balance.stars_meal + 1 : balance.stars_meal,
+                    stars_drink: isDrink ? balance.stars_drink + 1 : balance.stars_drink,
                 },
             });
         }
@@ -259,14 +259,14 @@ const scanQrCode = async (req, res) => {
                 userId,
                 restaurantId: restaurant.id,
                 type: isMeal ? 'meal' : 'drink',
-                stars_meal: isMeal ? 10 : 0,
-                stars_drink: isDrink ? 10 : 0,
+                stars_meal: isMeal ? 1 : 0,
+                stars_drink: isDrink ? 1 : 0,
             },
         });
         await (0, notification_service_1.sendNotificationToUser)({
             userId: userId,
             title: 'You received a stars!',
-            body: `You received ${isMeal ? 10 : 0}  stars meal & ${isDrink ? 10 : 0} stars drink from ${restaurant.name}`,
+            body: `You received ${isMeal ? 1 : 0}  stars meal & ${isDrink ? 1 : 0} stars drink from ${restaurant.name}`,
             type: 'STARS',
         });
         return (0, response_1.successResponse)(res, 'Stars updated successfully', balance);

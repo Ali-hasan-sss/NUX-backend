@@ -4,7 +4,7 @@ export const clientSwaggerSpec = swaggerJSDoc({
   definition: {
     openapi: '3.0.0',
     info: {
-      title: 'Lolity App - Client API',
+      title: 'nux - Client API',
       version: '1.0.0',
       description: 'API documentation for Client endpoints',
     },

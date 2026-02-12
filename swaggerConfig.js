@@ -9,7 +9,7 @@ const options = {
     definition: {
         openapi: '3.0.0',
         info: {
-            title: 'LolityApp API documentation',
+            title: 'nux API documentation',
             version: '1.0.0',
             description: 'Unified API documentation for Admin & Client',
         },

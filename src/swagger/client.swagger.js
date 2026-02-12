@@ -9,7 +9,7 @@ exports.clientSwaggerSpec = (0, swagger_jsdoc_1.default)({
     definition: {
         openapi: '3.0.0',
         info: {
-            title: 'Lolity App - Client API',
+            title: 'nux - Client API',
             version: '1.0.0',
             description: 'API documentation for Client endpoints',
         },

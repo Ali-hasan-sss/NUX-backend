@@ -4,7 +4,7 @@ export const restaurantSwaggerSpec = swaggerJSDoc({
   definition: {
     openapi: '3.0.0',
     info: {
-      title: 'Lolity App - Restaurants API',
+      title: 'nux - Restaurants API',
       version: '1.0.0',
       description: 'API documentation for restaurants endpoints',
     },

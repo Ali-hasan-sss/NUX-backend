@@ -4,7 +4,7 @@ export const commonSwaggerSpec = swaggerJSDoc({
   definition: {
     openapi: '3.0.0',
     info: {
-      title: 'Lolity App - Common API',
+      title: 'nux - Common API',
       version: '1.0.0',
       description: 'API documentation for Shared endpoints',
     },

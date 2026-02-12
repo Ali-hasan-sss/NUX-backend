@@ -47,7 +47,7 @@ const getLogoUrl = (): string => {
 };
 
 const getAppName = (): string => {
-  return process.env.APP_NAME || 'Lolity';
+  return process.env.APP_NAME || 'nux';
 };
 
 // Site visual identity: primary #00D9FF (cyan), dark text, light background

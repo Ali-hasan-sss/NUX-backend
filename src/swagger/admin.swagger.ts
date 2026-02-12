@@ -4,7 +4,7 @@ export const adminSwaggerSpec = swaggerJSDoc({
   definition: {
     openapi: '3.0.0',
     info: {
-      title: 'Lolity App - Admin API',
+      title: 'nux - Admin API',
       version: '1.0.0',
       description: 'API documentation for Admin endpoints',
     },
