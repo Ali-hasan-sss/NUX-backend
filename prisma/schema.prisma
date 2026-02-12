@@ -18,6 +18,7 @@ model User {
   qrCode                  String                  @unique
   firebaseToken           String?
   isRestaurant            Boolean                 @default(false)
+  googleId                String?                 @unique
   createdAt               DateTime                @default(now())
   emailVerificationCode   String?
   emailVerificationExpiry DateTime?

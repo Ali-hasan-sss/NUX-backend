@@ -9,6 +9,7 @@ import {
   requestPasswordReset,
   resetPassword,
   sendVerificationCode,
+  googleAuth,
 } from '../../controllers/client/auth.controller';
 import {
   generalRateLimiter,
@@ -75,6 +76,16 @@ router.post(
   body('password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters'),
   validateRequest,
   login,
+);
+
+// Google sign-in / sign-up (idToken from Google One Tap or OAuth)
+router.post(
+  '/google',
+  xssSanitizerMiddleware,
+  generalRateLimiter,
+  body('idToken').isString().notEmpty().withMessage('Google ID token is required'),
+  validateRequest,
+  googleAuth,
 );
 
 // Admin Login

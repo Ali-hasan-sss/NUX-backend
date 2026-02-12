@@ -8,6 +8,7 @@ import { REFRESH_TOKEN_SECRET } from '../../config/jwt';
 import { v4 as uuidv4 } from 'uuid';
 import { errorResponse, successResponse } from '../../utils/response';
 import { sendEmailVerificationCode, sendResetCodeEmail } from '../../utils/email';
+import { OAuth2Client } from 'google-auth-library';
 
 const prisma = new PrismaClient();
 
@@ -491,6 +492,15 @@ export const login = async (req: Request, res: Response) => {
       return errorResponse(res, 'Invalid email or password', 401);
     }
 
+    // If account was created with Google only, require Google sign-in
+    if (user.googleId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please sign in with Google.',
+        code: 'USE_GOOGLE_SIGNIN',
+      });
+    }
+
     // 2) تحقق كلمة المرور
     const isPasswordValid = await comparePassword(password, user.password);
     if (!isPasswordValid) {
@@ -906,4 +916,151 @@ export const resetPassword = async (req: Request, res: Response) => {
   });
 
   return successResponse(res, 'Password has been reset successfully');
+};
+
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
+
+/**
+ * POST /auth/google
+ * Sign in or sign up with Google ID token.
+ * - Customer (USER): create account if not exists, no password. Login if exists.
+ * - Restaurant owner: only login if email already has a restaurant account (created via normal registration).
+ */
+export const googleAuth = async (req: Request, res: Response) => {
+  try {
+    const { idToken } = req.body;
+    if (!idToken || typeof idToken !== 'string') {
+      return errorResponse(res, 'Google ID token is required', 400);
+    }
+
+    if (!GOOGLE_CLIENT_ID) {
+      console.error('GOOGLE_CLIENT_ID is not set');
+      return errorResponse(res, 'Google sign-in is not configured', 503);
+    }
+
+    const client = new OAuth2Client(GOOGLE_CLIENT_ID);
+    const ticket = await client.verifyIdToken({
+      idToken,
+      audience: GOOGLE_CLIENT_ID,
+    });
+    const payload = ticket.getPayload();
+    if (!payload || !payload.email) {
+      return errorResponse(res, 'Invalid Google token', 400);
+    }
+
+    const email = payload.email;
+    const fullName = payload.name || null;
+    const googleId = payload.sub;
+
+    let user = await prisma.user.findUnique({
+      where: { email },
+    });
+
+    if (user) {
+      let u = user;
+      // Existing user: allow login for USER and RESTAURANT_OWNER only
+      if (u.role === 'ADMIN') {
+        return errorResponse(res, 'Please use the admin login page', 400);
+      }
+      // Link Google ID if not already set
+      if (!u.googleId) {
+        await prisma.user.update({
+          where: { id: u.id },
+          data: { googleId },
+        });
+        u = { ...u, googleId };
+      }
+      // Email verified by Google
+      if (!u.emailVerified) {
+        await prisma.user.update({
+          where: { id: u.id },
+          data: { emailVerified: new Date() },
+        });
+      }
+      user = u;
+    } else {
+      // New user: create only for regular USER (customer). Restaurant must register via form.
+      const placeholderPassword = await hashPassword(uuidv4() + Date.now());
+      const qrCode = uuidv4();
+      user = await prisma.user.create({
+        data: {
+          email,
+          password: placeholderPassword,
+          fullName,
+          role: Role.USER,
+          qrCode,
+          googleId,
+          emailVerified: new Date(),
+        },
+      });
+    }
+
+    const accessToken = generateAccessToken({ userId: user.id, role: user.role });
+    const refreshToken = generateRefreshToken({ userId: user.id, role: user.role });
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { refreshToken },
+    });
+
+    let restaurantData: any = null;
+    if (user.isRestaurant) {
+      const restaurant = await prisma.restaurant.findUnique({
+        where: { userId: user.id },
+      });
+      if (restaurant) {
+        const activeSubs = await prisma.subscription.findMany({
+          where: {
+            restaurantId: restaurant.id,
+            status: 'ACTIVE',
+            endDate: { gte: new Date() },
+          },
+          include: { plan: true },
+          orderBy: { endDate: 'desc' },
+        });
+        const currentSub = activeSubs[0] || null;
+        const subscriptionData = currentSub
+          ? {
+              planName: currentSub.plan.title,
+              price: currentSub.plan.price,
+              endDate: currentSub.endDate,
+              status: currentSub.status,
+            }
+          : null;
+        restaurantData = {
+          id: restaurant.id,
+          name: restaurant.name,
+          address: restaurant.address,
+          latitude: restaurant.latitude,
+          longitude: restaurant.longitude,
+          isActive: restaurant.isActive,
+          isSubscriptionActive: restaurant.isSubscriptionActive,
+          subscription: subscriptionData,
+          activeSubscriptions: activeSubs.map((s) => ({
+            id: s.id,
+            planId: s.planId,
+            planName: s.plan.title,
+            price: s.plan.price,
+            startDate: s.startDate,
+            endDate: s.endDate,
+            status: s.status,
+          })),
+        };
+      }
+    }
+
+    return successResponse(res, 'Login successful', {
+      user: {
+        id: user.id,
+        email: user.email,
+        fullName: user.fullName,
+        role: user.role,
+        isActive: user.isActive,
+      },
+      restaurant: restaurantData,
+      tokens: { accessToken, refreshToken },
+    });
+  } catch (err) {
+    console.error('Google auth error:', err);
+    return errorResponse(res, 'Invalid Google token or server error', 400);
+  }
 };
