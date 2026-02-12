@@ -492,16 +492,7 @@ export const login = async (req: Request, res: Response) => {
       return errorResponse(res, 'Invalid email or password', 401);
     }
 
-    // If account was created with Google only, require Google sign-in
-    if (user.googleId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please sign in with Google.',
-        code: 'USE_GOOGLE_SIGNIN',
-      });
-    }
-
-    // 2) تحقق كلمة المرور
+    // 2) تحقق كلمة المرور (يُسمح بتسجيل الدخول بالإيميل حتى لو كان الحساب مرتبطاً بـ Google)
     const isPasswordValid = await comparePassword(password, user.password);
     if (!isPasswordValid) {
       console.log('❌ Invalid password for:', email);
@@ -921,10 +912,64 @@ export const resetPassword = async (req: Request, res: Response) => {
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 
 /**
- * POST /auth/google
- * Sign in or sign up with Google ID token.
- * - If user exists (by email): sign in and link googleId if not already set. Never create restaurant via Google.
- * - If user does not exist: create only a personal account (USER). Restaurant accounts must be created via the normal registration form.
+ * @swagger
+ * /auth/google:
+ *   post:
+ *     summary: تسجيل الدخول أو إنشاء حساب بواسطة Google
+ *     description: |
+ *       تسجيل الدخول أو التسجيل باستخدام Google ID token (من One Tap أو OAuth).
+ *       - إذا وُجد مستخدم بنفس البريد يتم تسجيل الدخول وربط googleId إن لم يكن مرتبطاً.
+ *       - إذا لم يوجد مستخدم يتم إنشاء حساب شخصي (USER) فقط. لا يُنشأ حساب مطعم من خلال Google.
+ *       - المدير (ADMIN) لا يمكنه استخدام هذا الرابط.
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - idToken
+ *             properties:
+ *               idToken:
+ *                 type: string
+ *                 description: Google ID token (JWT) من Google Sign-In أو One Tap
+ *                 example: eyJhbGciOiJSUzI1NiIs...
+ *     responses:
+ *       200:
+ *         description: تم تسجيل الدخول بنجاح، يُرجع بيانات المستخدم والـ tokens
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 user:
+ *                   type: object
+ *                   properties:
+ *                     id:
+ *                       type: string
+ *                     email:
+ *                       type: string
+ *                     fullName:
+ *                       type: string
+ *                     role:
+ *                       type: string
+ *                       enum: [USER, RESTAURANT_OWNER]
+ *                 restaurant:
+ *                   type: object
+ *                   nullable: true
+ *                   description: بيانات المطعم إن كان المستخدم صاحب مطعم
+ *                 tokens:
+ *                   type: object
+ *                   properties:
+ *                     accessToken:
+ *                       type: string
+ *                     refreshToken:
+ *                       type: string
+ *       400:
+ *         description: رمز Google غير صالح أو منتهي أو مطلوب
+ *       503:
+ *         description: تسجيل الدخول بـ Google غير مفعّل (GOOGLE_CLIENT_ID غير معيّن)
  */
 export const googleAuth = async (req: Request, res: Response) => {
   try {
