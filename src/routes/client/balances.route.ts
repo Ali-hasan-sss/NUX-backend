@@ -7,6 +7,7 @@ import {
   listPublicPackages,
   payAtRestaurant,
   scanQrCode,
+  validateGiftRecipient,
 } from '../../controllers/client/balances.controller';
 import { validateRequest } from '../../middlewares/security';
 
@@ -42,6 +43,9 @@ router.post(
   validateRequest,
   payAtRestaurant,
 );
+
+// GET validate gift recipient QR (user code only, not restaurant)
+router.get('/validate-gift-recipient', authenticateUser, validateGiftRecipient);
 
 // post gift with stars or balance to frind
 router.post(

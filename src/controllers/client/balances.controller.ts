@@ -529,6 +529,58 @@ export const payAtRestaurant = async (req: Request, res: Response) => {
 
 /**
  * @swagger
+ * /api/client/balance/validate-gift-recipient:
+ *   get:
+ *     summary: Validate if a QR code is a valid gift recipient (user QR, not restaurant)
+ *     tags: [balance]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: qrCode
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: { valid: true } or { valid: false, reason: 'restaurant_code' | 'not_found' | 'self' }
+ *       401:
+ *         description: Unauthorized
+ */
+export const validateGiftRecipient = async (req: Request, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const qrCode = req.query.qrCode as string;
+    if (!qrCode || !qrCode.trim()) {
+      return successResponse(res, 'Validation result', { valid: false, reason: 'not_found' });
+    }
+
+    const recipient = await prisma.user.findUnique({ where: { qrCode: qrCode.trim() } });
+    if (recipient) {
+      if (recipient.id === userId) {
+        return successResponse(res, 'Validation result', { valid: false, reason: 'self' });
+      }
+      return successResponse(res, 'Validation result', { valid: true });
+    }
+
+    const restaurant = await prisma.restaurant.findFirst({
+      where: {
+        OR: [{ qrCode_meal: qrCode.trim() }, { qrCode_drink: qrCode.trim() }],
+      },
+    });
+    if (restaurant) {
+      return successResponse(res, 'Validation result', { valid: false, reason: 'restaurant_code' });
+    }
+
+    return successResponse(res, 'Validation result', { valid: false, reason: 'not_found' });
+  } catch (error) {
+    console.error('validateGiftRecipient error:', error);
+    return errorResponse(res, 'Server error', 500);
+  }
+};
+
+/**
+ * @swagger
  * /api/client/balance/gift:
  *   post:
  *     summary: Gift balance or stars to another user via QR code
