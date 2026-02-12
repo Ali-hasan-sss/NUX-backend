@@ -6,10 +6,14 @@ import { errorResponse, successResponse } from '../../utils/response';
 const prisma = new PrismaClient();
 /**
  * @swagger
- * /firebase/updateFirebaseToken:
+ * /api/firebase/updateFirebaseToken:
  *   post:
- *     summary: Update the user's Firebase token for push notifications
- *     tags: [firebase]
+ *     summary: (Deprecated) Update the user's Firebase FCM token
+ *     description: |
+ *       **Deprecated.** Firebase push notification integration has been discontinued. This endpoint is kept for reference only.
+ *       Previously used to store the user's FCM token. Use another notification solution if needed.
+ *     deprecated: true
+ *     tags: [Firebase]
  *     security:
  *       - bearerAuth: []
  *     requestBody:
@@ -18,27 +22,21 @@ const prisma = new PrismaClient();
  *         application/json:
  *           schema:
  *             type: object
- *             required:
- *               - firebaseToken
+ *             required: [firebaseToken]
  *             properties:
  *               firebaseToken:
  *                 type: string
  *                 example: "fcm_token_here"
+ *                 description: Firebase Cloud Messaging token
  *     responses:
  *       200:
- *         description: Firebase token updated successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 message:
- *                   type: string
- *                   example: Firebase token updated
+ *         description: Firebase token updated (legacy)
  *       400:
  *         description: Firebase token is missing
  *       401:
- *         description: Unauthorized (user not authenticated)
+ *         description: Unauthorized
+ *       500:
+ *         description: Server error
  */
 export const updateFirebaseToken = async (req: Request, res: Response) => {
   const { firebaseToken } = req.body;

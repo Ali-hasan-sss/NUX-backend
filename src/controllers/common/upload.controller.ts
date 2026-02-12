@@ -12,7 +12,10 @@ cloudinary.config({
  * @swagger
  * /api/uploadFile:
  *   post:
- *     summary: Upload an image to Cloudinary
+ *     summary: Upload a file to the server
+ *     description: |
+ *       Uploads a file (image) to the server. Accepted types: image/jpeg, image/png, image/webp. Max size 5MB.
+ *       **Note:** Cloudinary upload has been discontinued; files are stored on the server. Firebase integration for push notifications has also been removed (see deprecated /api/firebase/updateFirebaseToken).
  *     tags: [Upload]
  *     requestBody:
  *       required: true
@@ -20,25 +23,27 @@ cloudinary.config({
  *         multipart/form-data:
  *           schema:
  *             type: object
+ *             required: [file]
  *             properties:
  *               file:
  *                 type: string
  *                 format: binary
+ *                 description: Image file (JPEG, PNG, WebP)
  *               folder:
  *                 type: string
- *                 description: Optional target folder root (defaults to env CLOUDINARY_FOLDER or 'loalityapp')
+ *                 description: Optional target folder root
  *               restaurantId:
  *                 type: string
  *                 description: Optional restaurant id to namespace uploads
  *               entityType:
  *                 type: string
- *                 description: Optional entity type (e.g., 'logo' | 'menuItem')
+ *                 description: Optional entity type (e.g. logo, menuItem)
  *               entityId:
  *                 type: string
  *                 description: Optional entity id
  *     responses:
  *       200:
- *         description: Upload success
+ *         description: Upload success (returns url and metadata)
  *       400:
  *         description: No file provided
  *       415:

@@ -4,12 +4,17 @@ import Stripe from 'stripe';
 import { errorResponse, successResponse } from '../../utils/response';
 import { assertOwnerOrAdmin } from '../../utils/check_restauran-owner';
 import type StripeNS from 'stripe';
+import {
+  createPayPalOrder,
+  capturePayPalOrder,
+  isPayPalConfigured,
+} from '../../lib/paypal';
 
 /**
  * @swagger
  * tags:
  *   - name: Subscription
- *     description: Restaurant subscription checkout and activation via Stripe
+ *     description: Restaurant subscription checkout and activation via Stripe or PayPal
  */
 const prisma = new PrismaClient();
 
@@ -24,8 +29,12 @@ const stripe = getStripe();
  * @swagger
  * /restaurants/subscription/checkout:
  *   post:
- *     summary: Create Stripe checkout session (recurring)
- *     description: Creates a Stripe Checkout Session for a recurring subscription using the plan's Stripe price. Requires authentication as the restaurant owner.
+ *     summary: Create checkout session (Stripe or PayPal)
+ *     description: |
+ *       Creates a checkout session for a recurring subscription.
+ *       - **provider=stripe** (default) Creates a Stripe Checkout Session using the plan's Stripe price.
+ *       - **provider=paypal** Creates a PayPal order and returns the approval URL; after payment the client must call POST /restaurants/subscription/confirm-paypal with the orderId (token from return URL).
+ *       Requires authentication as the restaurant owner.
  *     tags: [Subscription]
  *     security:
  *       - bearerAuth: []
@@ -40,6 +49,11 @@ const stripe = getStripe();
  *               planId:
  *                 type: integer
  *                 example: 1
+ *               provider:
+ *                 type: string
+ *                 enum: [stripe, paypal]
+ *                 default: stripe
+ *                 description: Payment provider - stripe or paypal
  *               successUrl:
  *                 type: string
  *                 nullable: true
@@ -50,9 +64,9 @@ const stripe = getStripe();
  *                 example: "https://app.example.com/dashboard/subscription?status=cancel"
  *     responses:
  *       200:
- *         description: Checkout session created
+ *         description: Checkout session created (Stripe url + session id, or PayPal approvalUrl + orderId)
  *       400:
- *         description: Validation error or plan not configured
+ *         description: Validation error, plan not configured, or PayPal not configured when provider=paypal
  *       401:
  *         description: Unauthorized
  *       404:
@@ -65,12 +79,14 @@ export const createCheckoutSession = async (req: Request, res: Response) => {
     const userId = req.user?.id;
     if (!userId) return errorResponse(res, 'User not found', 401);
 
-    const { planId, successUrl, cancelUrl } = req.body as {
+    const { planId, successUrl, cancelUrl, provider } = req.body as {
       planId: number;
       successUrl?: string;
       cancelUrl?: string;
+      provider?: 'stripe' | 'paypal';
     };
     if (!planId) return errorResponse(res, 'planId is required', 400);
+    const paymentProvider = provider === 'paypal' ? 'paypal' : 'stripe';
 
     const restaurant = await prisma.restaurant.findFirst({ where: { userId } });
     if (!restaurant) return errorResponse(res, 'Restaurant not found', 404);
@@ -112,6 +128,59 @@ export const createCheckoutSession = async (req: Request, res: Response) => {
       }
     }
 
+    const appBase = process.env.APP_BASE_URL || 'http://localhost:3000';
+    const defaultSuccess = `${appBase}/dashboard/subscription?status=success&session_id=`;
+    const defaultCancel = `${appBase}/dashboard/subscription?status=cancel`;
+
+    // --- PayPal flow ---
+    if (paymentProvider === 'paypal') {
+      if (!isPayPalConfigured()) return errorResponse(res, 'PayPal is not configured', 400);
+
+      const paypalCancel = cancelUrl || defaultCancel;
+      // PayPal redirects to return_url and appends &token=ORDER_ID
+      const returnUrl = successUrl || `${appBase}/dashboard/subscription?status=success&provider=paypal`;
+
+      const { orderId, approvalUrl } = await createPayPalOrder({
+        amount: plan.price,
+        currency: plan.currency || 'EUR',
+        description: plan.title,
+        returnUrl,
+        cancelUrl: paypalCancel,
+      });
+
+      const payment = await prisma.payment.create({
+        data: {
+          userId,
+          restaurantId: restaurant.id,
+          amount: plan.price,
+          currency: plan.currency || 'EUR',
+          method: 'paypal',
+          status: 'created',
+          transactionId: orderId,
+          checkoutSessionId: orderId,
+          provider: 'paypal',
+          paymentMethod: 'PayPal',
+        },
+      });
+
+      const now = new Date();
+      const endDate = new Date(now.getTime() + plan.duration * 24 * 60 * 60 * 1000);
+      await prisma.subscription.create({
+        data: {
+          restaurantId: restaurant.id,
+          planId: plan.id,
+          startDate: now,
+          endDate,
+          status: 'PENDING',
+          paymentId: payment.id,
+          paymentStatus: 'unpaid',
+        },
+      });
+
+      return successResponse(res, 'PayPal checkout created', { url: approvalUrl, id: orderId });
+    }
+
+    // --- Stripe flow ---
     if (!plan.stripePriceId)
       return errorResponse(res, 'Plan is not configured for Stripe subscriptions', 400);
 
@@ -124,7 +193,6 @@ export const createCheckoutSession = async (req: Request, res: Response) => {
       await prisma.restaurant.update({ where: { id: restaurant.id }, data: { stripeCustomerId } });
     }
 
-    const appBase = process.env.APP_BASE_URL || 'http://localhost:3000';
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
       customer: stripeCustomerId,
@@ -181,7 +249,7 @@ export const createCheckoutSession = async (req: Request, res: Response) => {
  * /restaurants/subscription/confirm:
  *   post:
  *     summary: Confirm Stripe checkout and activate subscription
- *     description: Confirms a Stripe Checkout Session and activates the corresponding restaurant subscription.
+ *     description: Confirms a Stripe Checkout Session (after redirect) and activates the corresponding restaurant subscription. Use this for Stripe only; for PayPal use POST /restaurants/subscription/confirm-paypal.
  *     tags: [Subscription]
  *     security:
  *       - bearerAuth: []
@@ -196,6 +264,7 @@ export const createCheckoutSession = async (req: Request, res: Response) => {
  *               sessionId:
  *                 type: string
  *                 example: "cs_test_123"
+ *                 description: Stripe Checkout Session ID from redirect
  *     responses:
  *       200:
  *         description: Subscription activated
@@ -468,6 +537,114 @@ export const confirmCheckoutSession = async (req: Request, res: Response) => {
     return successResponse(res, 'Subscription activated', { subscriptionId: stripeSubscriptionId });
   } catch (err: any) {
     const message = err?.message || 'Stripe confirm error';
+    return errorResponse(res, message, 500);
+  }
+};
+
+/**
+ * @swagger
+ * /restaurants/subscription/confirm-paypal:
+ *   post:
+ *     summary: Confirm PayPal checkout and activate subscription
+ *     description: Captures the PayPal order (after user approves on PayPal) and activates the restaurant subscription. Call this with the orderId received in the return URL query (e.g. ?token=ORDER_ID). Requires authentication.
+ *     tags: [Subscription]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [orderId]
+ *             properties:
+ *               orderId:
+ *                 type: string
+ *                 description: PayPal order ID (token from PayPal return URL)
+ *                 example: "8AB12345CD67890EF"
+ *     responses:
+ *       200:
+ *         description: Subscription activated
+ *       400:
+ *         description: Payment not completed or invalid orderId
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: Payment or subscription not found
+ *       500:
+ *         description: Server error
+ */
+export const confirmPayPalCheckout = async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return errorResponse(res, 'User not found', 401);
+
+    const { orderId } = req.body as { orderId: string };
+    if (!orderId) return errorResponse(res, 'orderId is required', 400);
+
+    await capturePayPalOrder(orderId);
+
+    const payment = await prisma.payment.findFirst({
+      where: { transactionId: orderId, provider: 'paypal' },
+    });
+    if (!payment) return errorResponse(res, 'Payment not found', 404);
+
+    const subscriptionRow = await prisma.subscription.findFirst({
+      where: { paymentId: payment.id },
+      include: { plan: true },
+    });
+    if (!subscriptionRow) return errorResponse(res, 'Subscription not found', 404);
+
+    const plan = subscriptionRow.plan;
+    const now = new Date();
+    const endDate = new Date(now.getTime() + plan.duration * 24 * 60 * 60 * 1000);
+
+    await prisma.$transaction([
+      prisma.payment.update({
+        where: { id: payment.id },
+        data: { status: 'succeeded', paymentMethod: 'PayPal' },
+      }),
+      prisma.subscription.update({
+        where: { id: subscriptionRow.id },
+        data: {
+          status: 'ACTIVE',
+          paymentStatus: 'paid',
+          paymentMethod: 'PayPal',
+          endDate,
+        },
+      }),
+      prisma.restaurant.update({
+        where: { id: subscriptionRow.restaurantId },
+        data: { isSubscriptionActive: true },
+      }),
+      prisma.invoice.upsert({
+        where: { stripeInvoiceId: `paypal_${payment.id}` },
+        update: {
+          status: 'PAID',
+          amountPaid: plan.price,
+          paymentMethod: 'PayPal',
+          periodStart: now,
+          periodEnd: endDate,
+        },
+        create: {
+          restaurantId: subscriptionRow.restaurantId,
+          subscriptionId: subscriptionRow.id,
+          paymentId: payment.id,
+          stripeInvoiceId: `paypal_${payment.id}`,
+          amountDue: plan.price,
+          amountPaid: plan.price,
+          currency: plan.currency || 'EUR',
+          status: 'PAID',
+          paymentMethod: 'PayPal',
+          periodStart: now,
+          periodEnd: endDate,
+        },
+      }),
+    ]);
+
+    return successResponse(res, 'Subscription activated', { subscriptionId: orderId });
+  } catch (err: any) {
+    const message = err?.message || 'PayPal confirm error';
     return errorResponse(res, message, 500);
   }
 };

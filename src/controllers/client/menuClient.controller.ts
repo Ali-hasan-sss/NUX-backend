@@ -34,7 +34,7 @@ export const getCategoriesByQRCode = async (req: Request, res: Response) => {
 
     const restaurant = await prisma.restaurant.findUnique({
       where: { id: qrCode }, // id هو String
-      select: { id: true },
+      select: { id: true, name: true, logo: true },
     });
 
     if (!restaurant)
@@ -44,7 +44,11 @@ export const getCategoriesByQRCode = async (req: Request, res: Response) => {
       where: { restaurantId: restaurant.id },
     });
 
-    res.json({ success: true, data: categories });
+    res.json({
+      success: true,
+      data: categories,
+      restaurant: { name: restaurant.name ?? null, logo: restaurant.logo ?? null },
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, message: 'Server error' });
