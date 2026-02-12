@@ -923,8 +923,8 @@ const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 /**
  * POST /auth/google
  * Sign in or sign up with Google ID token.
- * - Customer (USER): create account if not exists, no password. Login if exists.
- * - Restaurant owner: only login if email already has a restaurant account (created via normal registration).
+ * - If user exists (by email): sign in and link googleId if not already set. Never create restaurant via Google.
+ * - If user does not exist: create only a personal account (USER). Restaurant accounts must be created via the normal registration form.
  */
 export const googleAuth = async (req: Request, res: Response) => {
   try {
@@ -939,10 +939,20 @@ export const googleAuth = async (req: Request, res: Response) => {
     }
 
     const client = new OAuth2Client(GOOGLE_CLIENT_ID);
-    const ticket = await client.verifyIdToken({
-      idToken,
-      audience: GOOGLE_CLIENT_ID,
-    });
+    let ticket;
+    try {
+      ticket = await client.verifyIdToken({
+        idToken,
+        audience: GOOGLE_CLIENT_ID,
+      });
+    } catch (verifyErr: any) {
+      console.error('Google verifyIdToken failed:', verifyErr?.message || verifyErr);
+      return errorResponse(
+        res,
+        'Invalid or expired Google token. Ensure the app uses the same Web Client ID as the server.',
+        400
+      );
+    }
     const payload = ticket.getPayload();
     if (!payload || !payload.email) {
       return errorResponse(res, 'Invalid Google token', 400);
@@ -957,12 +967,11 @@ export const googleAuth = async (req: Request, res: Response) => {
     });
 
     if (user) {
+      // Existing user: sign in and optionally link Google ID (so they can use Google next time)
       let u = user;
-      // Existing user: allow login for USER and RESTAURANT_OWNER only
       if (u.role === 'ADMIN') {
         return errorResponse(res, 'Please use the admin login page', 400);
       }
-      // Link Google ID if not already set
       if (!u.googleId) {
         await prisma.user.update({
           where: { id: u.id },
@@ -970,7 +979,6 @@ export const googleAuth = async (req: Request, res: Response) => {
         });
         u = { ...u, googleId };
       }
-      // Email verified by Google
       if (!u.emailVerified) {
         await prisma.user.update({
           where: { id: u.id },
@@ -979,7 +987,7 @@ export const googleAuth = async (req: Request, res: Response) => {
       }
       user = u;
     } else {
-      // New user: create only for regular USER (customer). Restaurant must register via form.
+      // New user: create only personal account (USER). Do not create restaurant accounts via Google.
       const placeholderPassword = await hashPassword(uuidv4() + Date.now());
       const qrCode = uuidv4();
       user = await prisma.user.create({
@@ -1059,8 +1067,8 @@ export const googleAuth = async (req: Request, res: Response) => {
       restaurant: restaurantData,
       tokens: { accessToken, refreshToken },
     });
-  } catch (err) {
-    console.error('Google auth error:', err);
+  } catch (err: any) {
+    console.error('Google auth error:', err?.message || err);
     return errorResponse(res, 'Invalid Google token or server error', 400);
   }
 };
