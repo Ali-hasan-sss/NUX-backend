@@ -139,6 +139,7 @@ export const register = async (req: Request, res: Response) => {
           email: user.email,
           fullName: user.fullName,
           role: user.role,
+          emailVerified: false,
         },
         tokens: {
           accessToken,
@@ -245,7 +246,7 @@ export const register = async (req: Request, res: Response) => {
 export const registerRestaurant = async (req: Request, res: Response) => {
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   try {
-    const { email, password, fullName, restaurantName, address, latitude, longitude } = req.body;
+    const { email, password, fullName, restaurantName, address, latitude, longitude, logo } = req.body;
     if (
       !email ||
       !password ||
@@ -317,6 +318,7 @@ export const registerRestaurant = async (req: Request, res: Response) => {
           longitude: parseFloat(longitude),
           qrCode_drink: qrCodeDrink,
           qrCode_meal: qrCodeMeal,
+          logo: logo && typeof logo === 'string' && logo.trim() ? logo.trim() : null,
         },
       });
 
@@ -387,6 +389,7 @@ export const registerRestaurant = async (req: Request, res: Response) => {
           email: result.user.email,
           fullName: result.user.fullName,
           role: result.user.role,
+          emailVerified: false,
         },
         restaurant: {
           id: result.restaurant.id,
@@ -580,6 +583,7 @@ export const login = async (req: Request, res: Response) => {
         fullName: user.fullName,
         role: user.role,
         isActive: user.isActive,
+        emailVerified: !!user.emailVerified,
       },
       restaurant: restaurantData,
       tokens: { accessToken, refreshToken },
@@ -1108,6 +1112,7 @@ export const googleAuth = async (req: Request, res: Response) => {
         fullName: user.fullName,
         role: user.role,
         isActive: user.isActive,
+        emailVerified: !!user.emailVerified,
       },
       restaurant: restaurantData,
       tokens: { accessToken, refreshToken },

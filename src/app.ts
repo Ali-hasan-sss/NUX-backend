@@ -1,3 +1,4 @@
+import path from 'path';
 import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
@@ -60,6 +61,15 @@ app.get('/api/health', (req, res) => {
     cors: 'enabled',
   });
 });
+
+// Serve uploaded files (path without domain: /uploads/...)
+// Allow frontend (e.g. Next.js on another port) to load images
+const uploadsDir = path.join(__dirname, '..', process.env.UPLOAD_DIR || 'uploads');
+app.use('/uploads', (req, res, next) => {
+  res.set('Cross-Origin-Resource-Policy', 'cross-origin');
+  next();
+});
+app.use('/uploads', express.static(uploadsDir));
 
 // All API routes
 app.use('/api', routes);

@@ -19,6 +19,26 @@ import { authenticateUser } from '../../middlewares/Auth';
 import { verifyRestaurantOwnership } from '../../middlewares/Authorization';
 import { canManageMenu } from '../../middlewares/permissions';
 
+/** Accept full URL (http/https) or server path (/uploads/...) */
+const imageOrPathValidator = body('image')
+  .optional()
+  .isString()
+  .custom((value: string) => {
+    if (!value || value.trim() === '') return true;
+    const v = value.trim();
+    if (v.startsWith('http://') || v.startsWith('https://')) {
+      try {
+        new URL(v);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    if (v.startsWith('/uploads/')) return true;
+    return false;
+  })
+  .withMessage('Invalid image URL or path (use full URL or /uploads/... path)');
+
 const router = Router();
 
 router.use(authenticateUser);
@@ -32,7 +52,7 @@ router.post(
   '/categories',
   body('title').isString().notEmpty(),
   body('description').optional().isString(),
-  body('image').optional().isString().isURL().withMessage(' inviled image url'),
+  imageOrPathValidator,
   validateRequest,
   createCategory,
 );
@@ -41,7 +61,7 @@ router.put(
   '/categories/:categoryId',
   body('title').optional().isString(),
   body('description').optional().isString(),
-  body('image').optional().isString().isURL().withMessage(' inviled image url'),
+  imageOrPathValidator,
   validateRequest,
   updateCategory,
 );
@@ -80,7 +100,7 @@ router.post(
   body('title').isString().notEmpty(),
   body('description').optional().isString(),
   body('price').isFloat({ gt: 0 }),
-  body('image').optional().isString().isURL().withMessage(' inviled image url'),
+  imageOrPathValidator,
   body('preparationTime').optional().isInt({ min: 0 }),
   body('extras').optional().isArray(),
   body('discountType').optional().isIn(['PERCENTAGE', 'AMOUNT']),
@@ -98,7 +118,7 @@ router.put(
   body('title').optional().isString(),
   body('description').optional().isString(),
   body('price').optional().isFloat({ gt: 0 }),
-  body('image').optional().isString().isURL().withMessage(' inviled image url'),
+  imageOrPathValidator,
   body('preparationTime').optional().isInt({ min: 0 }),
   body('extras').optional().isArray(),
   body('discountType').optional().isIn(['PERCENTAGE', 'AMOUNT']),

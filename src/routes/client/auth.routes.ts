@@ -39,6 +39,26 @@ router.post(
   register,
 );
 
+/** Accept full URL (http/https) or server path (/uploads/...) for logo */
+const logoValidator = body('logo')
+  .optional()
+  .isString()
+  .custom((value: string) => {
+    if (!value || value.trim() === '') return true;
+    const v = value.trim();
+    if (v.startsWith('http://') || v.startsWith('https://')) {
+      try {
+        new URL(v);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    if (v.startsWith('/uploads/')) return true;
+    return false;
+  })
+  .withMessage('Logo must be a valid URL or /uploads/... path');
+
 // Register for restaurant
 router.post(
   '/registerRestaurant',
@@ -61,6 +81,7 @@ router.post(
     body('longitude')
       .isFloat({ min: -180, max: 180 })
       .withMessage('Longitude must be between -180 and 180'),
+    logoValidator,
     validateRequest, // middleware to check validation result and send errors
   ],
   generalRateLimiter,

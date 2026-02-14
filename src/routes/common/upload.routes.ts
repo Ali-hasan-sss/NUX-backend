@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import multer from 'multer';
-import { uploadToCloudinary } from '../../controllers/common/upload.controller';
+import { uploadToServer } from '../../controllers/common/upload.controller';
 
 const router = Router();
 
@@ -8,6 +8,6 @@ const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 // Public route for all authenticated/unauthenticated? If you want auth, import and add authenticateUser
-router.post('/', upload.single('file'), uploadToCloudinary);
+router.post('/', upload.single('file'), uploadToServer);
 
 export default router;

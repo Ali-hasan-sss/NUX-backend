@@ -21,6 +21,9 @@ dist/
 build/
 coverage/
 
+# Uploaded files (stored on server, path returned without domain)
+uploads/
+
 
 # OS files
 .DS_Store
