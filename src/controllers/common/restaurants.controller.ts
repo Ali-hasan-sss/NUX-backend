@@ -24,13 +24,13 @@ const prisma = new PrismaClient();
  *           type: integer
  *           minimum: 1
  *           maximum: 100
- *           default: 20
+ *           default: 50
  *         description: Number of restaurants per page
  *       - in: query
  *         name: search
  *         schema:
  *           type: string
- *         description: Search by restaurant name
+ *         description: Search by restaurant name, or by menu category title, or by menu item name/description (returns restaurants that match any of these)
  *     responses:
  *       200:
  *         description: Restaurants retrieved successfully
@@ -87,20 +87,46 @@ export const getAllRestaurants = async (req: Request, res: Response) => {
   console.log('🔍 getAllRestaurants called - GET /api/restaurants');
   try {
     const page = parseInt(req.query.page as string) || 1;
-    const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
     const search = req.query.search as string;
     const skip = (page - 1) * limit;
 
-    // Build where clause
+    // Build where clause: search by restaurant name, menu category title, or menu item title/description
     const where: any = {
       isActive: true,
     };
 
-    if (search) {
-      where.name = {
-        contains: search,
-        mode: 'insensitive',
-      };
+    if (search && typeof search === 'string' && search.trim()) {
+      const searchTerm = search.trim();
+      where.OR = [
+        { name: { contains: searchTerm, mode: 'insensitive' } },
+        {
+          menuCategories: {
+            some: {
+              title: { contains: searchTerm, mode: 'insensitive' },
+            },
+          },
+        },
+        {
+          menuCategories: {
+            some: {
+              items: {
+                some: {
+                  OR: [
+                    { title: { contains: searchTerm, mode: 'insensitive' } },
+                    {
+                      description: {
+                        contains: searchTerm,
+                        mode: 'insensitive',
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      ];
     }
 
     // Get restaurants with pagination

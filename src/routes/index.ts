@@ -32,6 +32,7 @@ import notificationsRoutes from './common/notification.routes';
 import uploadRoutes from './common/upload.routes';
 import plansRoutes from './common/plans.routes';
 import restaurantsRoutes from './common/restaurants.routes';
+import contactRoutes from './common/contact.routes';
 
 const router = Router();
 
@@ -71,4 +72,5 @@ router.use('/firebase', firebaseRoutes);
 router.use('/notifications', notificationsRoutes);
 router.use('/uploadFile', uploadRoutes);
 router.use('/plans', plansRoutes);
+router.use('/contact', contactRoutes);
 export default router;

@@ -168,6 +168,43 @@ export const sendEmailVerificationCode = async (email: string, code: string) => 
   });
 };
 
+const getContactEmail = (): string => {
+  return process.env.CONTACT_EMAIL || process.env.SMTP_USER || 'info@nuxapp.de';
+};
+
+export interface ContactFormParams {
+  name: string;
+  email: string;
+  subject: string;
+  message: string;
+}
+
+/**
+ * Send contact form submission to support (info@nuxapp.de).
+ */
+export const sendContactEmail = async (params: ContactFormParams) => {
+  const { name, email, subject, message } = params;
+  const transporter = getTransporter();
+  const to = getContactEmail();
+  const appName = getAppName();
+  const title = 'Contact form - NUX App';
+  const bodyHtml = `
+    <p style="margin:0 0 8px; font-size:15px; line-height:1.5; color:${BRAND.textMuted};"><strong>From:</strong> ${name} &lt;${email}&gt;</p>
+    <p style="margin:0 0 8px; font-size:15px; line-height:1.5; color:${BRAND.textMuted};"><strong>Subject:</strong> ${subject || '(no subject)'}</p>
+    <p style="margin:0 0 16px; font-size:13px; color:${BRAND.textLight}; border-bottom:1px solid ${BRAND.border}; padding-bottom:12px;">—</p>
+    <p style="margin:0; font-size:15px; line-height:1.6; color:${BRAND.text}; white-space:pre-wrap;">${message.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>`;
+  const html = buildBrandedEmail(title, bodyHtml);
+
+  await transporter.sendMail({
+    from: getFrom(),
+    to,
+    replyTo: email,
+    subject: `[NUX Contact] ${subject || 'Message from app'}`,
+    text: `From: ${name} <${email}>\nSubject: ${subject || '(no subject)'}\n\n${message}`,
+    html,
+  });
+};
+
 export interface SubscriptionReminderParams {
   to: string;
   restaurantName: string;
