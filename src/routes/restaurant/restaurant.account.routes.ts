@@ -7,6 +7,8 @@ import {
   updateRestaurantByOwner,
   getRestaurantByOwner,
   regenerateRestaurantQRCodes,
+  getFloorPlan,
+  updateFloorPlan,
 } from '../../controllers/restaurant/restaurant.info.controller';
 import { verifyRestaurantOwnership } from '../../middlewares/Authorization';
 
@@ -68,5 +70,22 @@ router.put(
   verifyRestaurantOwnership,
   validateRequest,
   regenerateRestaurantQRCodes,
+);
+
+// Floor plan
+router.get(
+  '/floor-plan',
+  authenticateUser,
+  verifyRestaurantOwnership,
+  validateRequest,
+  getFloorPlan,
+);
+router.put(
+  '/floor-plan',
+  authenticateUser,
+  verifyRestaurantOwnership,
+  body('floorPlan').optional().isObject().withMessage('floorPlan must be an object'),
+  validateRequest,
+  updateFloorPlan,
 );
 export default router;

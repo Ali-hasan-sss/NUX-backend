@@ -66,10 +66,11 @@ export const createOrder = async (req: Request, res: Response) => {
       });
     }
 
-    if (!totalPrice || totalPrice <= 0) {
+    const total = parseFloat(totalPrice);
+    if (totalPrice == null || total === undefined || Number.isNaN(total) || total < 0) {
       return res.status(400).json({
         success: false,
-        message: 'Total price must be greater than 0',
+        message: 'Total price must be 0 or greater',
       });
     }
 
@@ -153,30 +154,36 @@ export const createOrder = async (req: Request, res: Response) => {
         tableId,
         tableNumber: tableNumber ? parseInt(tableNumber) : null,
         orderType: orderTypeValue,
-        totalPrice: parseFloat(totalPrice),
+        totalPrice: Math.max(0, total),
         status: 'PENDING',
         items: {
-          create: items.map((item: any) => ({
+          create: items.map((item: any) => {
+            const unitPrice = Math.max(0, parseFloat(item.price) || 0);
+            const extrasTotal =
+              item.selectedExtras?.reduce(
+                (sum: number, extra: any) => sum + Math.max(0, extra.price || 0),
+                0,
+              ) || 0;
+            const lineTotal = Math.max(
+              0,
+              (unitPrice + extrasTotal) * (item.quantity || 1),
+            );
+            return {
             menuItemId: item.id || null,
             itemTitle: item.title,
             itemDescription: item.description || null,
             itemImage: item.image || null,
             quantity: item.quantity,
-            unitPrice: item.price,
-            totalPrice:
-              (item.price +
-                (item.selectedExtras?.reduce(
-                  (sum: number, extra: any) => sum + (extra.price || 0),
-                  0,
-                ) || 0)) *
-              item.quantity,
+            unitPrice,
+            totalPrice: lineTotal,
             selectedExtras: item.selectedExtras || null,
             notes: item.notes || null,
             preparationTime: item.preparationTime || null,
             baseCalories: item.baseCalories || null,
             allergies: item.allergies || [],
             kitchenSection: item.kitchenSection?.name || null,
-          })),
+            };
+          }),
         },
       },
       include: {

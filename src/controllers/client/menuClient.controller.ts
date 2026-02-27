@@ -34,7 +34,7 @@ export const getCategoriesByQRCode = async (req: Request, res: Response) => {
 
     const restaurant = await prisma.restaurant.findUnique({
       where: { id: qrCode }, // id هو String
-      select: { id: true, name: true, logo: true },
+      select: { id: true, name: true, logo: true, currency: true },
     });
 
     if (!restaurant)
@@ -44,10 +44,12 @@ export const getCategoriesByQRCode = async (req: Request, res: Response) => {
       where: { restaurantId: restaurant.id },
     });
 
+    const currency = restaurant.currency ?? 'EUR';
     res.json({
       success: true,
       data: categories,
       restaurant: { name: restaurant.name ?? null, logo: restaurant.logo ?? null },
+      currency,
     });
   } catch (err) {
     console.error(err);
@@ -86,6 +88,7 @@ export const getItemsByCategoryForCustomer = async (req: Request, res: Response)
     const category = await prisma.menuCategory.findUnique({
       where: { id: parseInt(categoryId) },
       include: {
+        restaurant: { select: { currency: true } },
         items: {
           include: {
             kitchenSection: {
@@ -102,7 +105,8 @@ export const getItemsByCategoryForCustomer = async (req: Request, res: Response)
 
     if (!category) return res.status(404).json({ success: false, message: 'Category not found' });
 
-    res.json({ success: true, data: category.items });
+    const currency = category.restaurant?.currency ?? 'EUR';
+    res.json({ success: true, data: category.items, currency });
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, message: 'Server error' });

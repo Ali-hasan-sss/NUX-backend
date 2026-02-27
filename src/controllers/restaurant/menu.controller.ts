@@ -35,7 +35,7 @@ export const getMenu = async (req: Request, res: Response) => {
     // Find the restaurant owned by the user using their ID
     const restaurant = await prisma.restaurant.findUnique({
       where: { userId },
-      select: { id: true },
+      select: { id: true, currency: true },
     });
 
     if (!restaurant) {
@@ -48,8 +48,8 @@ export const getMenu = async (req: Request, res: Response) => {
       where: { restaurantId: restaurant.id },
     });
 
-    // Return the data to the user
-    res.json({ success: true, data: categories });
+    const currency = restaurant.currency ?? 'EUR';
+    res.json({ success: true, data: categories, currency });
   } catch (err) {
     console.error(err);
     // If an unexpected server error occurs
@@ -323,7 +323,10 @@ export const getMenuItemsByCategory = async (req: Request, res: Response) => {
     // Find the category and check ownership
     const category = await prisma.menuCategory.findUnique({
       where: { id: parseInt(categoryId) },
-      include: { restaurant: true, items: true }, // Include items in the category
+      include: {
+        restaurant: { select: { userId: true, currency: true } },
+        items: true,
+      },
     });
 
     if (!category) return res.status(404).json({ success: false, message: 'Category not found' });
@@ -333,8 +336,8 @@ export const getMenuItemsByCategory = async (req: Request, res: Response) => {
         .json({ success: false, message: 'You are not the owner of this restaurant' });
     }
 
-    // Return all items in the category
-    res.json({ success: true, data: category.items });
+    const currency = category.restaurant.currency ?? 'EUR';
+    res.json({ success: true, data: category.items, currency });
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, message: 'Server error' });

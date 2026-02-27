@@ -57,13 +57,15 @@ export const getUserRestaurantsWithBalance = async (req: Request, res: Response)
         stars_meal: number;
         balance: number;
         isGroup: boolean;
+        /** Restaurant ID to use for voucher settings (restaurant id or group owner id) */
+        _restaurantIdForVouchers: string;
       }
     > = {};
 
     for (const b of balances) {
       const restaurant = b.restaurant;
 
-      const ownedGroups = restaurant.ownedGroups ?? [];
+      const ownedGroups = (restaurant.ownedGroups ?? []) as { id: string; name: string; description: string; ownerId: string }[];
       const membershipGroups = (restaurant.groupMemberships ?? [])
         .map((gm) => gm.group)
         .filter(
@@ -82,6 +84,7 @@ export const getUserRestaurantsWithBalance = async (req: Request, res: Response)
               stars_meal: 0,
               balance: 0,
               isGroup: true,
+              _restaurantIdForVouchers: group.ownerId,
             };
           }
 
@@ -98,6 +101,7 @@ export const getUserRestaurantsWithBalance = async (req: Request, res: Response)
             stars_meal: 0,
             balance: 0,
             isGroup: false,
+            _restaurantIdForVouchers: restaurant.id,
           };
         }
 
@@ -107,10 +111,49 @@ export const getUserRestaurantsWithBalance = async (req: Request, res: Response)
       }
     }
 
+    const restaurantIdsForVouchers = [
+      ...new Set(Object.values(grouped).map((x) => x._restaurantIdForVouchers)),
+    ];
+    const restaurantsVoucherSettings = await prisma.restaurant.findMany({
+      where: { id: { in: restaurantIdsForVouchers } },
+      select: { id: true, mealPointsPerVoucher: true, drinkPointsPerVoucher: true },
+    });
+    const voucherMap = new Map(
+      restaurantsVoucherSettings.map((r) => [
+        r.id,
+        {
+          mealPointsPerVoucher: r.mealPointsPerVoucher,
+          drinkPointsPerVoucher: r.drinkPointsPerVoucher,
+        },
+      ]),
+    );
+
+    const payload = Object.values(grouped).map((row) => {
+      const settings = voucherMap.get(row._restaurantIdForVouchers);
+      const mealPointsPerVoucher = settings?.mealPointsPerVoucher ?? null;
+      const drinkPointsPerVoucher = settings?.drinkPointsPerVoucher ?? null;
+      const vouchers_meal =
+        mealPointsPerVoucher != null && mealPointsPerVoucher > 0
+          ? Math.floor(row.stars_meal / mealPointsPerVoucher)
+          : null;
+      const vouchers_drink =
+        drinkPointsPerVoucher != null && drinkPointsPerVoucher > 0
+          ? Math.floor(row.stars_drink / drinkPointsPerVoucher)
+          : null;
+      const { _restaurantIdForVouchers: _, ...rest } = row;
+      return {
+        ...rest,
+        mealPointsPerVoucher,
+        drinkPointsPerVoucher,
+        vouchers_meal,
+        vouchers_drink,
+      };
+    });
+
     return successResponse(
       res,
       'Restaurants with balance fetched successfully',
-      Object.values(grouped),
+      payload,
     );
   } catch (error) {
     console.error('Get user restaurants with balance error:', error);

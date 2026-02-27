@@ -89,6 +89,10 @@ model Restaurant {
   logo                 String?
   isActive             Boolean                 @default(true)
   isSubscriptionActive Boolean                 @default(false)
+  mealPointsPerVoucher Int?                    // Points required per food voucher (e.g. 10)
+  drinkPointsPerVoucher Int?                   // Points required per drink voucher (e.g. 5)
+  currency             String?                @default("EUR") // Primary currency code (e.g. EUR, USD)
+  floorPlan            Json?                 // Restaurant floor plan: { walls: [], elements: [] }
   ads                  Ad[]
   gifts                Gift[]
   groupMemberships     GroupMembership[]

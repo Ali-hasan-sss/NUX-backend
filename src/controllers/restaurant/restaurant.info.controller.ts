@@ -38,6 +38,9 @@ export const getRestaurantByOwner = async (req: Request, res: Response) => {
         qrCode_meal: true,
         isSubscriptionActive: true,
         isActive: true,
+        mealPointsPerVoucher: true,
+        drinkPointsPerVoucher: true,
+        currency: true,
         createdAt: true,
         groupMemberships: {
           select: {
@@ -125,7 +128,17 @@ export const getRestaurantByOwner = async (req: Request, res: Response) => {
  */
 export const updateRestaurantByOwner = async (req: Request, res: Response) => {
   try {
-    const { name, address, latitude, longitude, logo, isActive } = req.body;
+    const {
+      name,
+      address,
+      latitude,
+      longitude,
+      logo,
+      isActive,
+      mealPointsPerVoucher,
+      drinkPointsPerVoucher,
+      currency,
+    } = req.body;
 
     const restaurant = await prisma.restaurant.findUnique({
       where: { userId: req.user!.id },
@@ -144,6 +157,15 @@ export const updateRestaurantByOwner = async (req: Request, res: Response) => {
         longitude: longitude ?? restaurant.longitude,
         logo: logo ?? restaurant.logo,
         isActive: isActive !== undefined ? isActive : restaurant.isActive,
+        mealPointsPerVoucher:
+          mealPointsPerVoucher !== undefined
+            ? (mealPointsPerVoucher === null ? null : Number(mealPointsPerVoucher))
+            : restaurant.mealPointsPerVoucher,
+        drinkPointsPerVoucher:
+          drinkPointsPerVoucher !== undefined
+            ? (drinkPointsPerVoucher === null ? null : Number(drinkPointsPerVoucher))
+            : restaurant.drinkPointsPerVoucher,
+        currency: currency !== undefined ? (currency ?? restaurant.currency) : restaurant.currency,
       },
       select: {
         id: true,
@@ -159,6 +181,9 @@ export const updateRestaurantByOwner = async (req: Request, res: Response) => {
         qrCode_meal: true,
         isSubscriptionActive: true,
         isActive: true,
+        mealPointsPerVoucher: true,
+        drinkPointsPerVoucher: true,
+        currency: true,
         createdAt: true,
       },
     });
@@ -212,6 +237,9 @@ export const regenerateRestaurantQRCodes = async (req: Request, res: Response) =
         qrCode_meal: true,
         isSubscriptionActive: true,
         isActive: true,
+        mealPointsPerVoucher: true,
+        drinkPointsPerVoucher: true,
+        currency: true,
         createdAt: true,
       },
     });
@@ -222,6 +250,83 @@ export const regenerateRestaurantQRCodes = async (req: Request, res: Response) =
     if (error?.code === 'P2025') {
       return errorResponse(res, 'Restaurant not found', 404);
     }
+    console.error(error);
+    return errorResponse(res, 'Internal server error', 500);
+  }
+};
+
+/**
+ * @swagger
+ * /api/restaurants/account/floor-plan:
+ *   get:
+ *     summary: Get restaurant floor plan
+ *     tags: [Restaurant account]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Floor plan data (or null)
+ */
+export const getFloorPlan = async (req: Request, res: Response) => {
+  try {
+    const restaurant = await prisma.restaurant.findUnique({
+      where: { userId: req.user!.id },
+      select: { id: true, floorPlan: true },
+    });
+    if (!restaurant) {
+      return errorResponse(res, 'Restaurant not found', 404);
+    }
+    return successResponse(res, 'Floor plan fetched', {
+      floorPlan: restaurant.floorPlan ?? { walls: [], elements: [] },
+    });
+  } catch (error) {
+    console.error(error);
+    return errorResponse(res, 'Internal server error', 500);
+  }
+};
+
+/**
+ * @swagger
+ * /api/restaurants/account/floor-plan:
+ *   put:
+ *     summary: Update restaurant floor plan
+ *     tags: [Restaurant account]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               floorPlan:
+ *                 type: object
+ *                 properties:
+ *                   walls: { type: array }
+ *                   elements: { type: array }
+ *     responses:
+ *       200:
+ *         description: Floor plan updated
+ */
+export const updateFloorPlan = async (req: Request, res: Response) => {
+  try {
+    const { floorPlan } = req.body;
+    const restaurant = await prisma.restaurant.findUnique({
+      where: { userId: req.user!.id },
+    });
+    if (!restaurant) {
+      return errorResponse(res, 'Restaurant not found', 404);
+    }
+    const data =
+      floorPlan != null && typeof floorPlan === 'object'
+        ? { walls: Array.isArray(floorPlan.walls) ? floorPlan.walls : [], elements: Array.isArray(floorPlan.elements) ? floorPlan.elements : [] }
+        : { walls: [], elements: [] };
+    await prisma.restaurant.update({
+      where: { id: restaurant.id },
+      data: { floorPlan: data as any },
+    });
+    return successResponse(res, 'Floor plan updated', { floorPlan: data });
+  } catch (error) {
     console.error(error);
     return errorResponse(res, 'Internal server error', 500);
   }
