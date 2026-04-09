@@ -38,6 +38,8 @@ model User {
   balances                UserRestaurantBalance[]
   subAdmin                SubAdmin?
   addedSubAdmins          SubAdmin[]             @relation("AddedSubAdmins")
+  walletWithdrawals       WalletWithdrawal[]
+  auditLogs               AuditLog[]
 }
 
 /// Sub-admin: added by main ADMIN only; has limited permissions in admin panel.
@@ -111,6 +113,7 @@ model Restaurant {
   balances             UserRestaurantBalance[]
   invoices             Invoice[]
   orders               Order[]
+  walletWithdrawals    WalletWithdrawal[]
 }
 
 model Plan {
@@ -570,4 +573,104 @@ model Permission {
 
   @@unique([planId, type])
   @@index([planId])
+}
+
+// --- Internal ledger wallet (no stored balance column; balance = SUM(credits) - SUM(debits)) ---
+
+enum WalletOwnerType {
+  USER
+  RESTAURANT
+}
+
+enum WalletLedgerEntryType {
+  CREDIT
+  DEBIT
+}
+
+enum WalletLedgerStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+enum WalletLedgerSource {
+  STRIPE
+  PAYPAL
+  ORDER
+  WITHDRAWAL
+  ADMIN
+}
+
+enum WalletWithdrawalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  COMPLETED
+}
+
+model Wallet {
+  id           String                  @id @default(uuid())
+  ownerType    WalletOwnerType
+  ownerId      String
+  currency     String                  @default("EUR")
+  createdAt    DateTime                @default(now())
+  ledgerEntries WalletLedgerEntry[]
+
+  @@unique([ownerType, ownerId])
+  @@index([ownerId])
+}
+
+/// Ledger lines for wallet; table name matches spec "transactions" intent via @@map
+model WalletLedgerEntry {
+  id               String               @id @default(uuid())
+  walletId         String
+  type             WalletLedgerEntryType
+  amount           Decimal              @db.Decimal(18, 4)
+  status           WalletLedgerStatus
+  source           WalletLedgerSource
+  referenceId      String?
+  metadata         Json?
+  idempotencyKey   String?              @unique
+  createdAt        DateTime             @default(now())
+  wallet           Wallet               @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([walletId])
+  @@index([referenceId])
+  @@index([createdAt])
+  @@map("wallet_transactions")
+}
+
+/// Either userId (client wallet) or restaurantId (restaurant ledger) is set — validated in service.
+model WalletWithdrawal {
+  id           String                 @id @default(uuid())
+  userId       String?
+  restaurantId String?
+  amount       Decimal                  @db.Decimal(18, 4)
+  currency     String                   @default("EUR")
+  status       WalletWithdrawalStatus   @default(PENDING)
+  accountInfo  Json?
+  adminId      String?
+  reviewedAt   DateTime?
+  createdAt    DateTime                 @default(now())
+  user         User?                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  restaurant   Restaurant?              @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([restaurantId])
+  @@index([status])
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  userId      String?
+  action      String
+  ipAddress   String?
+  deviceInfo  String?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
 }

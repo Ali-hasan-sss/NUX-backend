@@ -1,6 +1,6 @@
 import express from 'express';
-import { body, param } from 'express-validator';
-import { validateRequest } from '../../middlewares/security';
+import { body, param, query } from 'express-validator';
+import { validateRequest, walletMutationRateLimiter } from '../../middlewares/security';
 
 import { authenticateUser } from '../../middlewares/Auth';
 import {
@@ -10,6 +10,13 @@ import {
   getFloorPlan,
   updateFloorPlan,
 } from '../../controllers/restaurant/restaurant.info.controller';
+import {
+  getRestaurantWalletBalance,
+  getRestaurantWalletLedger,
+  createRestaurantWalletTopUpPaymentIntent,
+  syncRestaurantWalletTopUpPaymentIntent,
+  requestRestaurantWalletWithdrawal,
+} from '../../controllers/client/wallet.controller';
 import { verifyRestaurantOwnership } from '../../middlewares/Authorization';
 
 /** Accept full URL (http/https) or server path (/uploads/...) for logo */
@@ -88,4 +95,55 @@ router.put(
   validateRequest,
   updateFloorPlan,
 );
+
+/** Ledger-based EUR wallet balance for this restaurant (credits from customer wallet payments) */
+router.get(
+  '/wallet/balance',
+  authenticateUser,
+  verifyRestaurantOwnership,
+  validateRequest,
+  getRestaurantWalletBalance,
+);
+
+router.get(
+  '/wallet/transactions',
+  authenticateUser,
+  verifyRestaurantOwnership,
+  query('take').optional().isInt({ min: 1, max: 100 }),
+  query('cursor').optional().isString(),
+  validateRequest,
+  getRestaurantWalletLedger,
+);
+
+router.post(
+  '/wallet/top-up/payment-intent',
+  authenticateUser,
+  verifyRestaurantOwnership,
+  walletMutationRateLimiter,
+  body('amountEur').isFloat({ min: 1 }).withMessage('amountEur must be >= 1'),
+  validateRequest,
+  createRestaurantWalletTopUpPaymentIntent,
+);
+
+router.post(
+  '/wallet/top-up/sync',
+  authenticateUser,
+  verifyRestaurantOwnership,
+  walletMutationRateLimiter,
+  body('paymentIntentId').isString().isLength({ min: 10, max: 200 }),
+  validateRequest,
+  syncRestaurantWalletTopUpPaymentIntent,
+);
+
+router.post(
+  '/wallet/withdrawals',
+  authenticateUser,
+  verifyRestaurantOwnership,
+  walletMutationRateLimiter,
+  body('amount').isFloat({ gt: 0 }),
+  body('accountInfo').isObject(),
+  validateRequest,
+  requestRestaurantWalletWithdrawal,
+);
+
 export default router;

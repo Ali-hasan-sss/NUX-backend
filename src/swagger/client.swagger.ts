@@ -12,6 +12,11 @@ export const clientSwaggerSpec = swaggerJSDoc({
     tags: [
       { name: 'Account', description: 'Client Profile Endpoints' },
       { name: 'Auth', description: 'Client Requests Endpoints' },
+      {
+        name: 'Wallet',
+        description:
+          'Ledger-based internal wallet (EUR). Top-up via Stripe PaymentIntent; pay any restaurant; withdrawal requests. Aliases: same handlers under /wallet/* mirror /client/wallet/*.',
+      },
     ],
   },
   apis: ['./src/controllers/client/*.ts', './src/routes/client/*.ts'],

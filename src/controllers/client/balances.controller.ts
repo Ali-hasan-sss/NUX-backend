@@ -9,15 +9,17 @@ const prisma = new PrismaClient();
 /**
  * @swagger
  * tags:
- *   name: balance
- *   description: APIs for managing user balances and QR scans
+ *   - name: balance
+ *     description: |
+ *       Loyalty stars per restaurant (meal/drink) and QR scans.
+ *       Monetary payments between user and restaurants use the Wallet API (/client/wallet), not UserRestaurantBalance.balance.
  */
 
 /**
  * @swagger
- * /api/client/balance/with-restaurants:
+ * /client/balance/with-restaurants:
  *   get:
- *     summary: Get all restaurants where the user has a balance or stars
+ *     summary: Restaurants where the user has stars or legacy per-restaurant balance row
  *     tags: [balance]
  *     security:
  *       - bearerAuth: []
@@ -166,6 +168,8 @@ export const getUserRestaurantsWithBalance = async (req: Request, res: Response)
  *   get:
  *     summary: Get public packages for a specific restaurant
  *     tags: [balance]
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: restaurantId
@@ -213,7 +217,7 @@ export const listPublicPackages = async (req: Request, res: Response) => {
 };
 /**
  * @swagger
- * /api/client/balance/scan-qr:
+ * /client/balance/scan-qr:
  *   post:
  *     summary: Scan QR code to earn stars at a restaurant
  *     tags: [balance]
@@ -363,9 +367,10 @@ export const scanQrCode = async (req: Request, res: Response) => {
 
 /**
  * @swagger
- * /api/client/balance/pay:
+ * /client/balance/pay:
  *   post:
- *     summary: Pay at a single restaurant or across a restaurant group using balance or stars
+ *     summary: Pay with meal or drink stars at a restaurant or group
+ *     description: currencyType must be stars_meal or stars_drink. For EUR money use POST /client/wallet/pay-restaurant.
  *     tags: [balance]
  *     security:
  *       - bearerAuth: []
@@ -386,8 +391,8 @@ export const scanQrCode = async (req: Request, res: Response) => {
  *                 example: "RESTAURANT_OR_GROUP_UUID_123"
  *               currencyType:
  *                 type: string
- *                 enum: [balance, stars_meal, stars_drink]
- *                 example: "balance"
+ *                 enum: [stars_meal, stars_drink]
+ *                 example: stars_meal
  *               amount:
  *                 type: number
  *                 example: 20
@@ -413,9 +418,10 @@ export const payAtRestaurant = async (req: Request, res: Response) => {
       return errorResponse(res, 'targetId, currencyType and amount are required', 400);
     }
 
-    if (!['balance', 'stars_meal', 'stars_drink'].includes(currencyType)) {
+    if (!['stars_meal', 'stars_drink'].includes(currencyType)) {
       return errorResponse(res, 'Invalid currencyType', 400);
     }
+
     const restaurant = await prisma.restaurant.findUnique({
       where: { id: targetId },
       select: { id: true, name: true, userId: true },
@@ -436,18 +442,15 @@ export const payAtRestaurant = async (req: Request, res: Response) => {
       });
       if (!balance) return errorResponse(res, 'No balance found for this restaurant', 400);
 
-      if (currencyType === 'balance' && balance.balance < amount)
-        return errorResponse(res, 'Insufficient balance', 400);
       if (currencyType === 'stars_meal' && balance.stars_meal < amount)
         return errorResponse(res, 'Insufficient meal stars', 400);
       if (currencyType === 'stars_drink' && balance.stars_drink < amount)
         return errorResponse(res, 'Insufficient drink stars', 400);
 
-      // discount the balance paied
       await prisma.userRestaurantBalance.update({
         where: { id: balance.id },
         data: {
-          balance: currencyType === 'balance' ? balance.balance - amount : balance.balance,
+          balance: balance.balance,
           stars_meal:
             currencyType === 'stars_meal' ? balance.stars_meal - amount : balance.stars_meal,
           stars_drink:
@@ -499,12 +502,9 @@ export const payAtRestaurant = async (req: Request, res: Response) => {
     if (!balances || balances.length === 0)
       return errorResponse(res, 'No balances found for this group', 400);
 
-    // addition all balances
     const total = balances.reduce((sum, b) => {
-      if (currencyType === 'balance') return sum + b.balance;
       if (currencyType === 'stars_meal') return sum + b.stars_meal;
-      if (currencyType === 'stars_drink') return sum + b.stars_drink;
-      return sum;
+      return sum + b.stars_drink;
     }, 0);
 
     if (total < amount) return errorResponse(res, 'Insufficient group balance', 400);
@@ -515,13 +515,7 @@ export const payAtRestaurant = async (req: Request, res: Response) => {
       if (remaining <= 0) break;
       let deduct = 0;
 
-      if (currencyType === 'balance') {
-        deduct = Math.min(b.balance, remaining);
-        await prisma.userRestaurantBalance.update({
-          where: { id: b.id },
-          data: { balance: b.balance - deduct },
-        });
-      } else if (currencyType === 'stars_meal') {
+      if (currencyType === 'stars_meal') {
         deduct = Math.min(b.stars_meal, remaining);
         await prisma.userRestaurantBalance.update({
           where: { id: b.id },
@@ -572,7 +566,7 @@ export const payAtRestaurant = async (req: Request, res: Response) => {
 
 /**
  * @swagger
- * /api/client/balance/validate-gift-recipient:
+ * /client/balance/validate-gift-recipient:
  *   get:
  *     summary: Validate if a QR code is a valid gift recipient (user QR, not restaurant)
  *     tags: [balance]
@@ -586,7 +580,22 @@ export const payAtRestaurant = async (req: Request, res: Response) => {
  *           type: string
  *     responses:
  *       200:
- *         description: { valid: true } or { valid: false, reason: 'restaurant_code' | 'not_found' | 'self' }
+ *         description: success true; data.valid boolean; data.reason when valid is false
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     valid:
+ *                       type: boolean
+ *                     reason:
+ *                       type: string
+ *                       enum: [restaurant_code, not_found, self]
  *       401:
  *         description: Unauthorized
  */
@@ -624,9 +633,10 @@ export const validateGiftRecipient = async (req: Request, res: Response) => {
 
 /**
  * @swagger
- * /api/client/balance/gift:
+ * /client/balance/gift:
  *   post:
- *     summary: Gift balance or stars to another user via QR code
+ *     summary: Gift meal or drink stars to another user via QR code
+ *     description: currencyType must be stars_meal or stars_drink. Monetary gifts are not supported here; use Wallet flows if needed.
  *     tags: [balance]
  *     security:
  *       - bearerAuth: []
@@ -650,8 +660,8 @@ export const validateGiftRecipient = async (req: Request, res: Response) => {
  *                 description: UUID of the restaurant or restaurant group to gift from
  *               currencyType:
  *                 type: string
- *                 enum: [balance, stars_meal, stars_drink]
- *                 description: Type of balance to gift
+ *                 enum: [stars_meal, stars_drink]
+ *                 description: Star type to gift
  *               amount:
  *                 type: number
  *                 description: Amount to gift
@@ -674,14 +684,14 @@ export const giftBalance = async (req: Request, res: Response) => {
     const { qrCode, targetId, currencyType, amount } = req.body as {
       qrCode: string;
       targetId: string;
-      currencyType: 'balance' | 'stars_meal' | 'stars_drink';
+      currencyType: 'stars_meal' | 'stars_drink';
       amount: number;
     };
 
     if (!qrCode || !targetId || !currencyType || !amount) {
       return errorResponse(res, 'All fields are required', 400);
     }
-    if (!['balance', 'stars_meal', 'stars_drink'].includes(currencyType)) {
+    if (!['stars_meal', 'stars_drink'].includes(currencyType)) {
       return errorResponse(res, 'Invalid currencyType', 400);
     }
     if (amount <= 0) {
@@ -709,27 +719,19 @@ export const giftBalance = async (req: Request, res: Response) => {
       if (!senderBalance) return errorResponse(res, 'No balance found for this restaurant', 400);
 
       const available =
-        currencyType === 'balance'
-          ? senderBalance.balance
-          : currencyType === 'stars_meal'
-            ? senderBalance.stars_meal
-            : senderBalance.stars_drink;
+        currencyType === 'stars_meal' ? senderBalance.stars_meal : senderBalance.stars_drink;
 
       if (available < amount) return errorResponse(res, 'Insufficient balance', 400);
 
       await prisma.$transaction([
-        // discount
         prisma.userRestaurantBalance.update({
           where: { id: senderBalance.id },
           data:
-            currencyType === 'balance'
-              ? { balance: { decrement: amount } }
-              : currencyType === 'stars_meal'
-                ? { stars_meal: { decrement: amount } }
-                : { stars_drink: { decrement: amount } },
+            currencyType === 'stars_meal'
+              ? { stars_meal: { decrement: amount } }
+              : { stars_drink: { decrement: amount } },
         }),
 
-        // add the balance to the recipient
         prisma.userRestaurantBalance.upsert({
           where: {
             userId_restaurantId: {
@@ -738,15 +740,13 @@ export const giftBalance = async (req: Request, res: Response) => {
             },
           },
           update:
-            currencyType === 'balance'
-              ? { balance: { increment: amount } }
-              : currencyType === 'stars_meal'
-                ? { stars_meal: { increment: amount } }
-                : { stars_drink: { increment: amount } },
+            currencyType === 'stars_meal'
+              ? { stars_meal: { increment: amount } }
+              : { stars_drink: { increment: amount } },
           create: {
             userId: recipient.id,
             restaurantId: restaurant.id,
-            balance: currencyType === 'balance' ? amount : 0,
+            balance: 0,
             stars_meal: currencyType === 'stars_meal' ? amount : 0,
             stars_drink: currencyType === 'stars_drink' ? amount : 0,
           },
@@ -795,12 +795,9 @@ export const giftBalance = async (req: Request, res: Response) => {
     });
     if (balances.length === 0) return errorResponse(res, 'No balances found for this group', 400);
 
-    // add the balances
     const total = balances.reduce((sum, b) => {
-      if (currencyType === 'balance') return sum + b.balance;
       if (currencyType === 'stars_meal') return sum + b.stars_meal;
-      if (currencyType === 'stars_drink') return sum + b.stars_drink;
-      return sum;
+      return sum + b.stars_drink;
     }, 0);
 
     if (total < amount) return errorResponse(res, 'Insufficient group balance', 400);
@@ -812,31 +809,7 @@ export const giftBalance = async (req: Request, res: Response) => {
       if (remaining <= 0) break;
       let deduct = 0;
 
-      if (currencyType === 'balance') {
-        deduct = Math.min(b.balance, remaining);
-        txs.push(
-          prisma.userRestaurantBalance.update({
-            where: { id: b.id },
-            data: { balance: b.balance - deduct },
-          }),
-          prisma.userRestaurantBalance.upsert({
-            where: {
-              userId_restaurantId: {
-                userId: recipient.id,
-                restaurantId: b.restaurantId,
-              },
-            },
-            update: { balance: { increment: deduct } },
-            create: {
-              userId: recipient.id,
-              restaurantId: b.restaurantId,
-              balance: deduct,
-              stars_meal: 0,
-              stars_drink: 0,
-            },
-          }),
-        );
-      } else if (currencyType === 'stars_meal') {
+      if (currencyType === 'stars_meal') {
         deduct = Math.min(b.stars_meal, remaining);
         txs.push(
           prisma.userRestaurantBalance.update({

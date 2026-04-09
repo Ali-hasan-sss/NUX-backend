@@ -9,6 +9,12 @@ export const adminSwaggerSpec = swaggerJSDoc({
       description: 'API documentation for Admin endpoints',
     },
     servers: [{ url: 'http://localhost:5000/api' }],
+    tags: [
+      {
+        name: 'Wallet (Admin)',
+        description: 'Approve or reject user wallet withdrawal requests (ledger debit on approve).',
+      },
+    ],
   },
   apis: ['./src/controllers/admin/*.ts', './src/routes/admin/*.ts'],
 });

@@ -33,9 +33,14 @@ import uploadRoutes from './common/upload.routes';
 import plansRoutes from './common/plans.routes';
 import restaurantsRoutes from './common/restaurants.routes';
 import contactRoutes from './common/contact.routes';
+import walletRoutes from './client/wallet.routes';
+import adminWalletRoutes from './admin/admin.wallet.routes';
 
 const router = Router();
 
+router.use('/wallet', walletRoutes);
+router.use('/client/wallet', walletRoutes);
+router.use('/admin/wallet', adminWalletRoutes);
 router.use('/auth', authRoutes);
 router.use('/admin/users', usersRoutes);
 router.use('/admin/subadmins', subadminsRoutes);

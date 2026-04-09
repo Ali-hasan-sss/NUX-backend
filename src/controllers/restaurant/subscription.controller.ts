@@ -1,6 +1,5 @@
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
-import Stripe from 'stripe';
 import { errorResponse, successResponse } from '../../utils/response';
 import { assertOwnerOrAdmin } from '../../utils/check_restauran-owner';
 import type StripeNS from 'stripe';
@@ -9,6 +8,8 @@ import {
   capturePayPalOrder,
   isPayPalConfigured,
 } from '../../lib/paypal';
+import { getStripeClient } from '../../lib/stripeClient';
+import { walletService } from '../../wallet/services/wallet.service';
 
 /**
  * @swagger
@@ -19,9 +20,7 @@ import {
 const prisma = new PrismaClient();
 
 function getStripe() {
-  const key = process.env.STRIPE_SECRET_KEY;
-  if (!key) throw new Error('STRIPE_SECRET_KEY is missing');
-  return new Stripe(key, { apiVersion: '2025-08-27.basil' });
+  return getStripeClient();
 }
 const stripe = getStripe();
 
@@ -352,7 +351,7 @@ export const confirmCheckoutSession = async (req: Request, res: Response) => {
     console.log('Session subscription:', expanded);
 
     if (expanded && typeof expanded !== 'string') {
-      const s = expanded as Stripe.Subscription;
+      const s = expanded as StripeNS.Subscription;
       console.log('Expanded subscription:', s);
 
       // Try current_period_start/end first, then fallback to billing_cycle_anchor
@@ -394,7 +393,7 @@ export const confirmCheckoutSession = async (req: Request, res: Response) => {
       stripeSubscriptionId = s.id;
     } else if (typeof session.subscription === 'string') {
       console.log('Retrieving subscription:', session.subscription);
-      const s = (await stripe.subscriptions.retrieve(session.subscription)) as Stripe.Subscription;
+      const s = (await stripe.subscriptions.retrieve(session.subscription)) as StripeNS.Subscription;
       console.log('Retrieved subscription:', s);
 
       // Try current_period_start/end first, then fallback to billing_cycle_anchor
@@ -653,8 +652,11 @@ export const confirmPayPalCheckout = async (req: Request, res: Response) => {
  * @swagger
  * /restaurants/subscription/webhook:
  *   post:
- *     summary: Stripe webhook (subscriptions & invoices)
- *     description: Consumes Stripe events to activate/renew subscriptions and record invoices. Verifies signature using STRIPE_WEBHOOK_SECRET.
+ *     summary: Stripe webhook (subscriptions, invoices, user wallet top-up)
+ *     description: |
+ *       Raw JSON body; use Stripe-Signature header. STRIPE_WEBHOOK_SECRET must match your Stripe dashboard endpoint.
+ *       Handles checkout.session.completed, invoice.paid, invoice.payment_failed, and payment_intent.succeeded when
+ *       metadata.wallet_purpose is wallet_topup (credits user ledger idempotently by payment intent id).
  *     tags: [Subscription]
  *     requestBody:
  *       required: true
@@ -663,8 +665,10 @@ export const confirmPayPalCheckout = async (req: Request, res: Response) => {
  *           schema:
  *             type: object
  *     responses:
- *       200: { description: Event processed }
- *       400: { description: Invalid signature or bad payload }
+ *       200:
+ *         description: Event processed
+ *       400:
+ *         description: Invalid signature or bad payload
  */
 export const stripeWebhook = async (req: Request, res: Response) => {
   try {
@@ -970,6 +974,30 @@ export const stripeWebhook = async (req: Request, res: Response) => {
             status: 'FAILED',
           },
         });
+        break;
+      }
+      case 'payment_intent.succeeded': {
+        const pi = event.data.object as StripeNS.PaymentIntent;
+        const amountReceived = pi.amount_received ?? pi.amount;
+        const currency = (pi.currency || 'eur').toUpperCase();
+        const meta = pi.metadata as Record<string, string> | undefined;
+        if (meta?.wallet_purpose === 'wallet_topup' && meta?.userId) {
+          await walletService.applyStripeTopUp({
+            paymentIntentId: pi.id,
+            amountReceivedCents: amountReceived,
+            currency,
+            userId: meta.userId,
+            metadata: meta,
+          });
+        } else if (meta?.wallet_purpose === 'restaurant_wallet_topup' && meta?.restaurantId) {
+          await walletService.applyStripeRestaurantTopUp({
+            paymentIntentId: pi.id,
+            amountReceivedCents: amountReceived,
+            currency,
+            restaurantId: meta.restaurantId,
+            metadata: meta,
+          });
+        }
         break;
       }
       default:

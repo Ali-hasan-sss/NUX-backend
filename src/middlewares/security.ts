@@ -90,6 +90,30 @@ export const loginRateLimiter = rateLimit({
   message: { success: false, message: 'Too many login attempts. Try again later.' },
 });
 
+/** After authenticateUser; limits wallet mutations per user + IP */
+export const walletMutationRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: false,
+  keyGenerator: (req) => {
+    const uid = (req as any).user?.id ?? 'anon';
+    return `${getClientIp(req)}:${uid}`;
+  },
+  message: { success: false, message: 'Too many wallet operations. Try again later.' },
+});
+
+export const walletAdminRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: false,
+  keyGenerator: (req) => getClientIp(req),
+  message: { success: false, message: 'Too many requests.' },
+});
+
 // Helper to check express-validator results
 export const validateRequest = (req: Request, res: Response, next: NextFunction) => {
   const errors = validationResult(req);

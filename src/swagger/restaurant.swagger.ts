@@ -9,6 +9,16 @@ export const restaurantSwaggerSpec = swaggerJSDoc({
       description: 'API documentation for restaurants endpoints',
     },
     servers: [{ url: 'http://localhost:5000/api' }],
+    tags: [
+      {
+        name: 'Restaurant wallet',
+        description: 'Ledger balance for the restaurant (credits when customers pay with app wallet).',
+      },
+    ],
   },
-  apis: ['./src/controllers/restaurant/*.ts', './src/routes/restaurant/*.ts'],
+  apis: [
+    './src/controllers/restaurant/*.ts',
+    './src/routes/restaurant/*.ts',
+    './src/controllers/client/wallet.controller.ts',
+  ],
 });

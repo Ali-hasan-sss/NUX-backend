@@ -37,8 +37,8 @@ router.post(
   authenticateUser,
   body('targetId').isUUID().withMessage('targetId must be a valid UUID'),
   body('currencyType')
-    .isIn(['balance', 'stars_meal', 'stars_drink'])
-    .withMessage('currencyType must be either BALANCE or STARS'),
+    .isIn(['stars_meal', 'stars_drink'])
+    .withMessage('currencyType must be stars_meal or stars_drink (use /client/wallet for money)'),
   body('amount').isFloat({ gt: 0 }).withMessage('amount must be greater than 0'),
   validateRequest,
   payAtRestaurant,
@@ -54,8 +54,8 @@ router.post(
   body('targetId').isString().notEmpty().withMessage('targetId is required'),
   body('qrCode').isString().notEmpty().withMessage('QR code is required'),
   body('currencyType')
-    .isIn(['balance', 'stars_meal', 'stars_drink'])
-    .withMessage('currencyType must be either BALANCE or STARS'),
+    .isIn(['stars_meal', 'stars_drink'])
+    .withMessage('currencyType must be stars_meal or stars_drink (use /client/wallet for money)'),
   body('amount').isFloat({ gt: 0 }).withMessage('amount must be greater than 0'),
   validateRequest,
   giftBalance,
