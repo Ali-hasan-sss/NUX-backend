@@ -40,6 +40,11 @@ model User {
   addedSubAdmins          SubAdmin[]             @relation("AddedSubAdmins")
   walletWithdrawals       WalletWithdrawal[]
   auditLogs               AuditLog[]
+  pinHash                 String?
+  biometricEnabled        Boolean                 @default(false)
+  trustedDeviceId         String?
+  paymentDevices          UserDevice[]
+  paymentApprovals        PaymentApproval[]
 }
 
 /// Sub-admin: added by main ADMIN only; has limited permissions in admin panel.
@@ -114,6 +119,7 @@ model Restaurant {
   invoices             Invoice[]
   orders               Order[]
   walletWithdrawals    WalletWithdrawal[]
+  paymentApprovals   PaymentApproval[]
 }
 
 model Plan {
@@ -573,6 +579,55 @@ model Permission {
 
   @@unique([planId, type])
   @@index([planId])
+}
+
+enum PaymentApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+enum PaymentInitiatedFrom {
+  WEB
+  MOBILE
+}
+
+/// Registered mobile devices for wallet payment trust and step-up context.
+model UserDevice {
+  id         String   @id @default(uuid())
+  userId     String
+  deviceId   String
+  deviceName String?
+  isTrusted  Boolean  @default(false)
+  lastSeen   DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, deviceId])
+  @@index([userId])
+}
+
+/// Web/mobile-initiated wallet pay; execution happens only after mobile approve + PIN (and optional biometric on device).
+model PaymentApproval {
+  id               String                  @id @default(uuid())
+  userId           String
+  restaurantId     String
+  amount           Decimal                 @db.Decimal(18, 4)
+  currency         String                  @default("EUR")
+  status           PaymentApprovalStatus   @default(PENDING)
+  approvalToken    String                  @unique
+  initiatedFrom    PaymentInitiatedFrom
+  deviceId         String?
+  idempotencyKey   String?                 @unique
+  orderReference   String?
+  expiresAt        DateTime
+  createdAt        DateTime                @default(now())
+  resolvedAt       DateTime?
+  user             User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  restaurant       Restaurant              @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@index([expiresAt])
 }
 
 // --- Internal ledger wallet (no stored balance column; balance = SUM(credits) - SUM(debits)) ---

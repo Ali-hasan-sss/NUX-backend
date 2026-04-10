@@ -1,11 +1,15 @@
 import { Request, Response } from 'express';
-import { Prisma } from '@prisma/client';
+import { PaymentInitiatedFrom, Prisma } from '@prisma/client';
 import { errorResponse, successResponse } from '../../utils/response';
 import {
   walletService,
   InsufficientBalanceError,
   WalletValidationError,
 } from '../../wallet/services/wallet.service';
+import {
+  paymentApprovalService,
+  PaymentApprovalError,
+} from '../../wallet/services/paymentApproval.service';
 import { getStripeClient } from '../../lib/stripeClient';
 import { getClientIp, getDeviceInfo } from '../../wallet/utils/httpContext';
 
@@ -322,42 +326,213 @@ export const syncWalletTopUpPaymentIntent = async (
  *       500:
  *         description: Server error
  */
-export const payRestaurantWithWallet = async (req: Request, res: Response): Promise<Response> => {
+/** @deprecated Use POST /client/wallet/pay-restaurant/request + mobile approval. */
+export const payRestaurantWithWallet = async (_req: Request, res: Response): Promise<Response> => {
+  return errorResponse(
+    res,
+    'Direct wallet payment is disabled. Use POST /client/wallet/pay-restaurant/request, then approve on the mobile app with your PIN.',
+    403,
+  );
+};
+
+export const getWalletPaymentSecurity = async (req: Request, res: Response): Promise<Response> => {
+  try {
+    const deviceIdRaw = req.query.deviceId;
+    const deviceId =
+      typeof deviceIdRaw === 'string' && deviceIdRaw.trim().length > 0 ? deviceIdRaw.trim() : undefined;
+    const data = await paymentApprovalService.getSecurityStatus(req.user!.id, deviceId ?? null);
+    return successResponse(res, 'Payment security', data);
+  } catch (e) {
+    console.error('getWalletPaymentSecurity', e);
+    return errorResponse(res, 'Server error', 500);
+  }
+};
+
+export const setWalletPaymentPin = async (req: Request, res: Response): Promise<Response> => {
+  try {
+    const { pin, currentPin } = req.body as { pin?: string; currentPin?: string };
+    if (!pin || typeof pin !== 'string') {
+      return errorResponse(res, 'pin is required', 400);
+    }
+    await paymentApprovalService.setPaymentPin(req.user!.id, pin, currentPin ?? null);
+    return successResponse(res, 'PIN saved', {});
+  } catch (e: unknown) {
+    if (e instanceof PaymentApprovalError) {
+      const status =
+        e.code === 'CURRENT_PIN_INVALID' || e.code === 'PIN_INVALID' ? 400 : e.code === 'NOT_FOUND' ? 404 : 400;
+      return errorResponse(res, e.message, status);
+    }
+    console.error('setWalletPaymentPin', e);
+    return errorResponse(res, 'Server error', 500);
+  }
+};
+
+function parseBiometricEnabledFlag(raw: unknown): boolean | null {
+  if (raw === true || raw === 'true' || raw === 1 || raw === '1') return true;
+  if (raw === false || raw === 'false' || raw === 0 || raw === '0') return false;
+  return null;
+}
+
+export const setWalletPaymentBiometric = async (req: Request, res: Response): Promise<Response> => {
+  try {
+    const flag = parseBiometricEnabledFlag((req.body as { enabled?: unknown }).enabled);
+    if (flag === null) {
+      return errorResponse(res, 'enabled must be a boolean', 400);
+    }
+    await paymentApprovalService.setBiometricEnabled(req.user!.id, flag);
+    return successResponse(res, 'Updated', {});
+  } catch (e) {
+    console.error('setWalletPaymentBiometric', e);
+    return errorResponse(res, 'Server error', 500);
+  }
+};
+
+export const requestWalletPayRestaurant = async (req: Request, res: Response): Promise<Response> => {
   try {
     const userId = req.user!.id;
-    const { restaurantId, amount, currency, idempotencyKey, orderReference } = req.body as {
+    const { restaurantId, amount, currency, orderReference, idempotencyKey, initiatedFrom } = req.body as {
       restaurantId?: string;
       amount?: number;
       currency?: string;
-      idempotencyKey?: string;
       orderReference?: string;
+      idempotencyKey?: string;
+      initiatedFrom?: string;
     };
 
     if (!restaurantId || amount == null) {
       return errorResponse(res, 'restaurantId and amount are required', 400);
     }
 
+    let channel: PaymentInitiatedFrom = PaymentInitiatedFrom.WEB;
+    if (initiatedFrom === 'MOBILE' || initiatedFrom === 'mobile') {
+      channel = PaymentInitiatedFrom.MOBILE;
+    } else if (initiatedFrom === 'WEB' || initiatedFrom === 'web' || initiatedFrom == null) {
+      channel = PaymentInitiatedFrom.WEB;
+    } else {
+      return errorResponse(res, 'initiatedFrom must be web or mobile', 400);
+    }
+
+    const headerChannel = String(req.headers['x-client-channel'] ?? '').toLowerCase();
+    if (headerChannel === 'mobile') {
+      channel = PaymentInitiatedFrom.MOBILE;
+    } else if (headerChannel === 'web') {
+      channel = PaymentInitiatedFrom.WEB;
+    }
+
     const amt = new Prisma.Decimal(String(amount));
-    const result = await walletService.payRestaurant({
+    const data = await paymentApprovalService.createRequest({
       userId,
       restaurantId,
       amount: amt,
       currency: currency ?? 'EUR',
-      idempotencyKey: idempotencyKey ?? null,
+      initiatedFrom: channel,
       orderReference: orderReference ?? null,
+      idempotencyKey: idempotencyKey ?? null,
+    });
+
+    return successResponse(res, 'Awaiting mobile approval', data);
+  } catch (e: unknown) {
+    if (e instanceof PaymentApprovalError) {
+      return errorResponse(res, e.message, e.code === 'PIN_NOT_SET' ? 428 : 400);
+    }
+    if (e instanceof WalletValidationError) {
+      return errorResponse(res, e.message, 400);
+    }
+    console.error('requestWalletPayRestaurant', e);
+    return errorResponse(res, 'Server error', 500);
+  }
+};
+
+export const approveWalletPayRestaurant = async (req: Request, res: Response): Promise<Response> => {
+  try {
+    const userId = req.user!.id;
+    const body = req.body as {
+      approvalId?: string;
+      approvalToken?: string;
+      pin?: string;
+      deviceId?: string;
+      deviceName?: string;
+    };
+
+    const approvalId = body.approvalId?.trim();
+    const approvalToken = body.approvalToken?.trim();
+    const pin = body.pin?.trim();
+    const deviceId = body.deviceId?.trim();
+    const deviceName = body.deviceName?.trim();
+    console.log('[wallet.approve] incoming', {
+      userId,
+      hasApprovalId: Boolean(approvalId),
+      hasApprovalToken: Boolean(approvalToken),
+      hasPin: Boolean(pin && pin.length > 0),
+      deviceId,
+    });
+
+    if (!approvalId || !approvalToken || !deviceId) {
+      return errorResponse(res, 'approvalId, approvalToken, and deviceId are required', 400);
+    }
+
+    const result = await paymentApprovalService.approve({
+      userId,
+      approvalId,
+      approvalToken,
+      ...(pin && pin.length > 0 ? { pin } : {}),
+      deviceId,
+      deviceName: deviceName && deviceName.length > 0 ? deviceName : null,
       ipAddress: getClientIp(req),
       deviceInfo: getDeviceInfo(req),
     });
 
     return successResponse(res, 'Payment completed', result);
   } catch (e: unknown) {
+    if (e instanceof PaymentApprovalError) {
+      console.warn('[wallet.approve] PaymentApprovalError', {
+        userId: req.user?.id,
+        message: e.message,
+        code: (e as PaymentApprovalError).code,
+      });
+      const code = (e as PaymentApprovalError).code;
+      const status =
+        code === 'EXPIRED'
+          ? 410
+          : code === 'NOT_FOUND'
+            ? 404
+            : code === 'TOKEN_INVALID' || code === 'PIN_INVALID'
+              ? 401
+              : 400;
+      return errorResponse(res, e.message, status, code);
+    }
     if (e instanceof InsufficientBalanceError) {
+      console.warn('[wallet.approve] InsufficientBalanceError', {
+        userId: req.user?.id,
+        message: e.message,
+      });
       return errorResponse(res, 'Insufficient wallet balance', 400);
     }
     if (e instanceof WalletValidationError) {
+      console.warn('[wallet.approve] WalletValidationError', {
+        userId: req.user?.id,
+        message: e.message,
+      });
       return errorResponse(res, e.message, 400);
     }
-    console.error('payRestaurantWithWallet', e);
+    console.error('approveWalletPayRestaurant', e);
+    return errorResponse(res, 'Server error', 500);
+  }
+};
+
+export const rejectWalletPayRestaurant = async (req: Request, res: Response): Promise<Response> => {
+  try {
+    const { approvalId } = req.body as { approvalId?: string };
+    if (!approvalId) {
+      return errorResponse(res, 'approvalId is required', 400);
+    }
+    await paymentApprovalService.reject({ userId: req.user!.id, approvalId });
+    return successResponse(res, 'Rejected', {});
+  } catch (e: unknown) {
+    if (e instanceof PaymentApprovalError) {
+      return errorResponse(res, e.message, 404);
+    }
+    console.error('rejectWalletPayRestaurant', e);
     return errorResponse(res, 'Server error', 500);
   }
 };
