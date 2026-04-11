@@ -661,6 +661,7 @@ enum WalletWithdrawalStatus {
   APPROVED
   REJECTED
   COMPLETED
+  CANCELLED
 }
 
 model Wallet {

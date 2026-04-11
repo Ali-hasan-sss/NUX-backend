@@ -9,6 +9,8 @@ import {
   getWalletLedger,
   payRestaurantWithWallet,
   requestWalletWithdrawal,
+  listUserWalletWithdrawals,
+  cancelUserWalletWithdrawal,
   getWalletPaymentSecurity,
   setWalletPaymentPin,
   setWalletPaymentBiometric,
@@ -29,6 +31,14 @@ router.get(
   query('cursor').optional().isString(),
   validateRequest,
   getWalletLedger,
+);
+
+router.get(
+  '/withdrawals',
+  query('take').optional().isInt({ min: 1, max: 100 }),
+  query('skip').optional().isInt({ min: 0 }),
+  validateRequest,
+  listUserWalletWithdrawals,
 );
 
 router.get(
@@ -114,6 +124,8 @@ router.post(
   validateRequest,
   payRestaurantWithWallet,
 );
+
+router.post('/withdrawals/:id/cancel', cancelUserWalletWithdrawal);
 
 router.post(
   '/withdrawals',

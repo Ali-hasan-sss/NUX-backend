@@ -18,6 +18,8 @@ import {
   createRestaurantWalletTopUpPaymentIntent,
   syncRestaurantWalletTopUpPaymentIntent,
   requestRestaurantWalletWithdrawal,
+  listRestaurantWalletWithdrawals,
+  cancelRestaurantWalletWithdrawal,
 } from '../../controllers/client/wallet.controller';
 import { verifyRestaurantOwnership } from '../../middlewares/Authorization';
 
@@ -138,6 +140,26 @@ router.get(
   query('cursor').optional().isString(),
   validateRequest,
   getRestaurantWalletLedger,
+);
+
+router.get(
+  '/wallet/withdrawals',
+  authenticateUser,
+  verifyRestaurantOwnership,
+  query('take').optional().isInt({ min: 1, max: 100 }),
+  query('skip').optional().isInt({ min: 0 }),
+  validateRequest,
+  listRestaurantWalletWithdrawals,
+);
+
+router.post(
+  '/wallet/withdrawals/:id/cancel',
+  authenticateUser,
+  verifyRestaurantOwnership,
+  walletMutationRateLimiter,
+  param('id').isUUID(),
+  validateRequest,
+  cancelRestaurantWalletWithdrawal,
 );
 
 router.post(

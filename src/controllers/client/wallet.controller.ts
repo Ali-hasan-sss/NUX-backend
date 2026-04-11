@@ -660,6 +660,35 @@ export const requestWalletWithdrawal = async (req: Request, res: Response): Prom
   }
 };
 
+export const listUserWalletWithdrawals = async (req: Request, res: Response): Promise<Response> => {
+  try {
+    const userId = req.user!.id;
+    const take = Math.min(parseInt(String(req.query.take ?? '50'), 10) || 50, 100);
+    const skip = Math.max(parseInt(String(req.query.skip ?? '0'), 10) || 0, 0);
+    const { total, rows } = await walletService.listWithdrawalsForUser({ userId, skip, take });
+    return successResponse(res, 'Withdrawals', { items: rows, total });
+  } catch (e) {
+    console.error('listUserWalletWithdrawals', e);
+    return errorResponse(res, 'Server error', 500);
+  }
+};
+
+export const cancelUserWalletWithdrawal = async (req: Request, res: Response): Promise<Response> => {
+  try {
+    const userId = req.user!.id;
+    const { id } = req.params;
+    if (!id) return errorResponse(res, 'id required', 400);
+    await walletService.cancelUserWithdrawal({ withdrawalId: id, userId });
+    return successResponse(res, 'Withdrawal cancelled', {});
+  } catch (e: unknown) {
+    if (e instanceof WalletValidationError) {
+      return errorResponse(res, e.message, 400);
+    }
+    console.error('cancelUserWalletWithdrawal', e);
+    return errorResponse(res, 'Server error', 500);
+  }
+};
+
 /**
  * @swagger
  * /restaurants/account/wallet/transactions:
@@ -979,6 +1008,56 @@ export const requestRestaurantWalletWithdrawal = async (
       return errorResponse(res, e.message, 400);
     }
     console.error('requestRestaurantWalletWithdrawal', e);
+    return errorResponse(res, 'Server error', 500);
+  }
+};
+
+export const listRestaurantWalletWithdrawals = async (
+  req: Request,
+  res: Response
+): Promise<Response> => {
+  try {
+    const restaurant = (req as unknown as { restaurant?: { id: string } }).restaurant;
+    if (!restaurant?.id) {
+      return errorResponse(res, 'Restaurant context missing', 500);
+    }
+    const take = Math.min(parseInt(String(req.query.take ?? '50'), 10) || 50, 100);
+    const skip = Math.max(parseInt(String(req.query.skip ?? '0'), 10) || 0, 0);
+    const { total, rows } = await walletService.listWithdrawalsForRestaurant({
+      restaurantId: restaurant.id,
+      skip,
+      take,
+    });
+    return successResponse(res, 'Withdrawals', { items: rows, total });
+  } catch (e) {
+    console.error('listRestaurantWalletWithdrawals', e);
+    return errorResponse(res, 'Server error', 500);
+  }
+};
+
+export const cancelRestaurantWalletWithdrawal = async (
+  req: Request,
+  res: Response
+): Promise<Response> => {
+  try {
+    const restaurant = (req as unknown as { restaurant?: { id: string } }).restaurant;
+    const ownerUserId = req.user!.id;
+    if (!restaurant?.id) {
+      return errorResponse(res, 'Restaurant context missing', 500);
+    }
+    const { id } = req.params;
+    if (!id) return errorResponse(res, 'id required', 400);
+    await walletService.cancelRestaurantWithdrawal({
+      withdrawalId: id,
+      restaurantId: restaurant.id,
+      ownerUserId,
+    });
+    return successResponse(res, 'Withdrawal cancelled', {});
+  } catch (e: unknown) {
+    if (e instanceof WalletValidationError) {
+      return errorResponse(res, e.message, 400);
+    }
+    console.error('cancelRestaurantWalletWithdrawal', e);
     return errorResponse(res, 'Server error', 500);
   }
 };

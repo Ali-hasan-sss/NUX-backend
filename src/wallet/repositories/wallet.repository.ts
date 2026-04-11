@@ -8,6 +8,11 @@ import {
   WalletOwnerType,
 } from '@prisma/client';
 
+/** Pending ledger line that reserves funds until withdrawal is approved or rejected. */
+export function withdrawalHoldIdempotencyKey(withdrawalId: string): string {
+  return `withdrawal_hold_${withdrawalId}`;
+}
+
 export class WalletRepository {
   constructor(private readonly db: PrismaClient) {}
 
@@ -41,6 +46,49 @@ export class WalletRepository {
       return null;
     }
     const balance = await this.getBalance(this.db, wallet.id);
+    return { balance, walletId: wallet.id, currency: wallet.currency };
+  }
+
+  async sumPendingWithdrawalHolds(
+    tx: Prisma.TransactionClient,
+    walletId: string,
+  ): Promise<Prisma.Decimal> {
+    const row = await tx.walletLedgerEntry.aggregate({
+      where: {
+        walletId,
+        status: 'PENDING',
+        type: 'DEBIT',
+        source: 'WITHDRAWAL',
+        idempotencyKey: { startsWith: 'withdrawal_hold_' },
+      },
+      _sum: { amount: true },
+    });
+    return row._sum.amount ?? new Prisma.Decimal(0);
+  }
+
+  /** Completed net minus pending withdrawal holds (spendable balance). */
+  async getAvailableBalance(
+    tx: Prisma.TransactionClient,
+    walletId: string,
+  ): Promise<Prisma.Decimal> {
+    const [net, holds] = await Promise.all([
+      this.getBalance(tx, walletId),
+      this.sumPendingWithdrawalHolds(tx, walletId),
+    ]);
+    return net.minus(holds);
+  }
+
+  async getAvailableBalanceByOwner(
+    ownerType: WalletOwnerType,
+    ownerId: string,
+  ): Promise<{ balance: Prisma.Decimal; walletId: string; currency: string } | null> {
+    const wallet = await this.db.wallet.findUnique({
+      where: { ownerType_ownerId: { ownerType, ownerId } },
+    });
+    if (!wallet) {
+      return null;
+    }
+    const balance = await this.getAvailableBalance(this.db, wallet.id);
     return { balance, walletId: wallet.id, currency: wallet.currency };
   }
 
