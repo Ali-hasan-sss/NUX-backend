@@ -1,6 +1,7 @@
 import {
   Prisma,
   PrismaClient,
+  WalletLedgerEntry,
   WalletLedgerSource,
   WalletOwnerType,
   WalletWithdrawalStatus,
@@ -128,6 +129,150 @@ export class WalletService {
       ...e,
       amount: formatWalletAmountForApi(e.amount),
     }));
+  }
+
+  async listRestaurantLedgerPaged(params: {
+    restaurantId: string;
+    page: number;
+    limit: number;
+    startDate?: Date;
+    endDate?: Date;
+  }): Promise<{
+    entries: Array<Omit<WalletLedgerEntry, 'amount'> & { amount: string }>;
+    pagination: {
+      currentPage: number;
+      totalPages: number;
+      totalItems: number;
+      itemsPerPage: number;
+      hasNextPage: boolean;
+      hasPrevPage: boolean;
+    };
+    currency: string;
+  }> {
+    const wallet = await this.prisma.wallet.findUnique({
+      where: { ownerType_ownerId: { ownerType: 'RESTAURANT', ownerId: params.restaurantId } },
+    });
+    if (!wallet) {
+      return {
+        entries: [],
+        pagination: {
+          currentPage: 1,
+          totalPages: 0,
+          totalItems: 0,
+          itemsPerPage: params.limit,
+          hasNextPage: false,
+          hasPrevPage: false,
+        },
+        currency: 'EUR',
+      };
+    }
+    const range: { start?: Date; end?: Date } | undefined =
+      params.startDate !== undefined || params.endDate !== undefined
+        ? {
+            ...(params.startDate !== undefined ? { start: params.startDate } : {}),
+            ...(params.endDate !== undefined ? { end: params.endDate } : {}),
+          }
+        : undefined;
+    const totalItems = await this.repo.countLedgerCompleted(wallet.id, range);
+    const totalPages = totalItems === 0 ? 0 : Math.ceil(totalItems / params.limit);
+    const currentPage =
+      totalItems === 0 ? 1 : Math.min(Math.max(1, params.page), totalPages);
+    const skip = totalItems === 0 ? 0 : (currentPage - 1) * params.limit;
+    const rows = await this.repo.listLedgerCompletedPage(wallet.id, {
+      skip,
+      take: params.limit,
+      ...(range ?? {}),
+    });
+    const entries = rows.map((e) => ({
+      ...e,
+      amount: formatWalletAmountForApi(e.amount),
+    }));
+    return {
+      entries,
+      pagination: {
+        currentPage,
+        totalPages,
+        totalItems,
+        itemsPerPage: params.limit,
+        hasNextPage: totalPages > 0 && currentPage < totalPages,
+        hasPrevPage: totalPages > 0 && currentPage > 1,
+      },
+      currency: wallet.currency,
+    };
+  }
+
+  async getRestaurantLedgerStats(params: {
+    restaurantId: string;
+    startDate?: Date;
+    endDate?: Date;
+  }): Promise<{
+    totalEntries: number;
+    creditsTotal: string;
+    debitsTotal: string;
+    netChange: string;
+    currency: string;
+    entriesToday: number;
+    entriesThisWeek: number;
+    entriesThisMonth: number;
+  }> {
+    const wallet = await this.prisma.wallet.findUnique({
+      where: { ownerType_ownerId: { ownerType: 'RESTAURANT', ownerId: params.restaurantId } },
+    });
+    const empty = {
+      totalEntries: 0,
+      creditsTotal: '0',
+      debitsTotal: '0',
+      netChange: '0',
+      currency: 'EUR',
+      entriesToday: 0,
+      entriesThisWeek: 0,
+      entriesThisMonth: 0,
+    };
+    if (!wallet) {
+      return empty;
+    }
+    const range: { start?: Date; end?: Date } | undefined =
+      params.startDate !== undefined || params.endDate !== undefined
+        ? {
+            ...(params.startDate !== undefined ? { start: params.startDate } : {}),
+            ...(params.endDate !== undefined ? { end: params.endDate } : {}),
+          }
+        : undefined;
+
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const thisWeek = new Date(today);
+    thisWeek.setDate(thisWeek.getDate() - 7);
+    const thisMonth = new Date(today);
+    thisMonth.setDate(thisMonth.getDate() - 30);
+
+    const [
+      totalEntries,
+      creditsSum,
+      debitsSum,
+      entriesToday,
+      entriesThisWeek,
+      entriesThisMonth,
+    ] = await Promise.all([
+      this.repo.countLedgerCompleted(wallet.id, range),
+      this.repo.sumLedgerCompletedByType(wallet.id, 'CREDIT', range),
+      this.repo.sumLedgerCompletedByType(wallet.id, 'DEBIT', range),
+      this.repo.countLedgerCompletedSince(wallet.id, today),
+      this.repo.countLedgerCompletedSince(wallet.id, thisWeek),
+      this.repo.countLedgerCompletedSince(wallet.id, thisMonth),
+    ]);
+
+    const net = creditsSum.minus(debitsSum);
+    return {
+      totalEntries,
+      creditsTotal: formatWalletAmountForApi(creditsSum),
+      debitsTotal: formatWalletAmountForApi(debitsSum),
+      netChange: formatWalletAmountForApi(net),
+      currency: wallet.currency,
+      entriesToday,
+      entriesThisWeek,
+      entriesThisMonth,
+    };
   }
 
   /**

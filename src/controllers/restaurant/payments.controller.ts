@@ -226,12 +226,28 @@ export const getRestaurantPayments = async (req: Request, res: Response) => {
  *                       type: number
  *                     totalAmount:
  *                       type: number
- *                     balancePayments:
- *                       type: number
  *                     starsMealPayments:
  *                       type: number
  *                     starsDrinkPayments:
  *                       type: number
+ *                     starsMealAmountSum:
+ *                       type: number
+ *                     starsDrinkAmountSum:
+ *                       type: number
+ *                     scanStarsMealGrantedTotal:
+ *                       type: number
+ *                     scanStarsDrinkGrantedTotal:
+ *                       type: number
+ *                     scanMealCount:
+ *                       type: number
+ *                     scanDrinkCount:
+ *                       type: number
+ *                     pointsIntegrityHealthy:
+ *                       type: boolean
+ *                     pointsIntegrityMealOk:
+ *                       type: boolean
+ *                     pointsIntegrityDrinkOk:
+ *                       type: boolean
  *                     uniqueCustomers:
  *                       type: number
  *                     paymentsToday:
@@ -253,38 +269,49 @@ export const getRestaurantPaymentStats = async (req: Request, res: Response) => 
     const restaurantId = (req as any).restaurantId;
     const { startDate, endDate } = req.query;
 
-    // Build where clause
+    // Build where clause (purchases)
     const where: any = {
+      restaurantId: restaurantId,
+    };
+
+    // Same date window for scans / StarsTransaction (compare granted ★ vs redeemed ★)
+    const scanWhere: any = {
       restaurantId: restaurantId,
     };
 
     // Add date filtering
     if (startDate || endDate) {
       where.createdAt = {};
+      scanWhere.createdAt = {};
       if (startDate) {
-        where.createdAt.gte = new Date(startDate as string);
+        const d = new Date(startDate as string);
+        where.createdAt.gte = d;
+        scanWhere.createdAt.gte = d;
       }
       if (endDate) {
-        where.createdAt.lte = new Date(endDate as string);
+        const d = new Date(endDate as string);
+        where.createdAt.lte = d;
+        scanWhere.createdAt.lte = d;
       }
     }
 
-    // Get basic stats
+    // Purchases (stars redemption) + scan grants (StarsTransaction) + scan counts (ScanLog)
     const [
       totalPayments,
       totalAmount,
-      balancePayments,
       starsMealPayments,
       starsDrinkPayments,
       uniqueCustomers,
+      starsMealAmountSum,
+      starsDrinkAmountSum,
+      scanSums,
+      scanMealCount,
+      scanDrinkCount,
     ] = await Promise.all([
       prisma.purchase.count({ where }),
       prisma.purchase.aggregate({
         where,
         _sum: { amount: true },
-      }),
-      prisma.purchase.count({
-        where: { ...where, paymentType: 'balance' },
       }),
       prisma.purchase.count({
         where: { ...where, paymentType: 'stars_meal' },
@@ -299,7 +326,33 @@ export const getRestaurantPaymentStats = async (req: Request, res: Response) => 
           _count: { userId: true },
         })
         .then((result) => result.length),
+      prisma.purchase.aggregate({
+        where: { ...where, paymentType: 'stars_meal' },
+        _sum: { amount: true },
+      }),
+      prisma.purchase.aggregate({
+        where: { ...where, paymentType: 'stars_drink' },
+        _sum: { amount: true },
+      }),
+      prisma.starsTransaction.aggregate({
+        where: scanWhere,
+        _sum: { stars_meal: true, stars_drink: true },
+      }),
+      prisma.scanLog.count({
+        where: { ...scanWhere, type: 'meal' },
+      }),
+      prisma.scanLog.count({
+        where: { ...scanWhere, type: 'drink' },
+      }),
     ]);
+
+    const redeemedMeal = Number(starsMealAmountSum._sum.amount ?? 0);
+    const redeemedDrink = Number(starsDrinkAmountSum._sum.amount ?? 0);
+    const grantedMeal = Number(scanSums._sum.stars_meal ?? 0);
+    const grantedDrink = Number(scanSums._sum.stars_drink ?? 0);
+    const pointsIntegrityMealOk = grantedMeal >= redeemedMeal;
+    const pointsIntegrityDrinkOk = grantedDrink >= redeemedDrink;
+    const pointsIntegrityHealthy = pointsIntegrityMealOk && pointsIntegrityDrinkOk;
 
     // Get time-based stats
     const now = new Date();
@@ -327,9 +380,17 @@ export const getRestaurantPaymentStats = async (req: Request, res: Response) => 
       data: {
         totalPayments,
         totalAmount: totalAmount._sum.amount || 0,
-        balancePayments,
         starsMealPayments,
         starsDrinkPayments,
+        starsMealAmountSum: starsMealAmountSum._sum.amount ?? 0,
+        starsDrinkAmountSum: starsDrinkAmountSum._sum.amount ?? 0,
+        scanStarsMealGrantedTotal: grantedMeal,
+        scanStarsDrinkGrantedTotal: grantedDrink,
+        scanMealCount,
+        scanDrinkCount,
+        pointsIntegrityHealthy,
+        pointsIntegrityMealOk,
+        pointsIntegrityDrinkOk,
         uniqueCustomers,
         paymentsToday,
         paymentsThisWeek,

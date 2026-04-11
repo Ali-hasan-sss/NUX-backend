@@ -13,6 +13,8 @@ import {
 import {
   getRestaurantWalletBalance,
   getRestaurantWalletLedger,
+  getRestaurantWalletLedgerReport,
+  getRestaurantWalletLedgerStats,
   createRestaurantWalletTopUpPaymentIntent,
   syncRestaurantWalletTopUpPaymentIntent,
   requestRestaurantWalletWithdrawal,
@@ -103,6 +105,29 @@ router.get(
   verifyRestaurantOwnership,
   validateRequest,
   getRestaurantWalletBalance,
+);
+
+/** Paged ledger + date filter (dashboard “wallet payments”) — before /wallet/transactions */
+router.get(
+  '/wallet/transactions/report',
+  authenticateUser,
+  verifyRestaurantOwnership,
+  query('page').optional().isInt({ min: 1 }),
+  query('limit').optional().isInt({ min: 1, max: 100 }),
+  query('startDate').optional().isString().trim(),
+  query('endDate').optional().isString().trim(),
+  validateRequest,
+  getRestaurantWalletLedgerReport,
+);
+
+router.get(
+  '/wallet/transactions/stats',
+  authenticateUser,
+  verifyRestaurantOwnership,
+  query('startDate').optional().isString().trim(),
+  query('endDate').optional().isString().trim(),
+  validateRequest,
+  getRestaurantWalletLedgerStats,
 );
 
 router.get(

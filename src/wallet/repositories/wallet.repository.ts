@@ -110,4 +110,75 @@ export class WalletRepository {
       ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
     });
   }
+
+  /** Completed ledger rows only (same basis as balance). */
+  private completedRangeWhere(
+    walletId: string,
+    range?: { start?: Date; end?: Date },
+  ): Prisma.WalletLedgerEntryWhereInput {
+    const where: Prisma.WalletLedgerEntryWhereInput = {
+      walletId,
+      status: 'COMPLETED',
+    };
+    if (range?.start || range?.end) {
+      where.createdAt = {};
+      if (range.start) where.createdAt.gte = range.start;
+      if (range.end) where.createdAt.lte = range.end;
+    }
+    return where;
+  }
+
+  async countLedgerCompleted(
+    walletId: string,
+    range?: { start?: Date; end?: Date },
+  ): Promise<number> {
+    return this.db.walletLedgerEntry.count({
+      where: this.completedRangeWhere(walletId, range),
+    });
+  }
+
+  async listLedgerCompletedPage(
+    walletId: string,
+    params: { skip: number; take: number; start?: Date; end?: Date },
+  ): Promise<WalletLedgerEntry[]> {
+    const range: { start?: Date; end?: Date } | undefined =
+      params.start !== undefined || params.end !== undefined
+        ? {
+            ...(params.start !== undefined ? { start: params.start } : {}),
+            ...(params.end !== undefined ? { end: params.end } : {}),
+          }
+        : undefined;
+    return this.db.walletLedgerEntry.findMany({
+      where: this.completedRangeWhere(walletId, range),
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      skip: params.skip,
+      take: Math.min(params.take, 100),
+    });
+  }
+
+  async sumLedgerCompletedByType(
+    walletId: string,
+    type: 'CREDIT' | 'DEBIT',
+    range?: { start?: Date; end?: Date },
+  ): Promise<Prisma.Decimal> {
+    const base = this.completedRangeWhere(walletId, range);
+    const row = await this.db.walletLedgerEntry.aggregate({
+      where: { ...base, type },
+      _sum: { amount: true },
+    });
+    return row._sum.amount ?? new Prisma.Decimal(0);
+  }
+
+  async countLedgerCompletedSince(
+    walletId: string,
+    since: Date,
+    until?: Date,
+  ): Promise<number> {
+    const where: Prisma.WalletLedgerEntryWhereInput = {
+      walletId,
+      status: 'COMPLETED',
+      createdAt: until != null ? { gte: since, lte: until } : { gte: since },
+    };
+    return this.db.walletLedgerEntry.count({ where });
+  }
 }

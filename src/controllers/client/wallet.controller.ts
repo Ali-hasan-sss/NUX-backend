@@ -708,6 +708,86 @@ export const getRestaurantWalletLedger = async (req: Request, res: Response): Pr
 
 /**
  * @swagger
+ * /restaurants/account/wallet/transactions/report:
+ *   get:
+ *     summary: Restaurant wallet ledger (paged, date filter, completed only)
+ *     tags: [Restaurant wallet]
+ *     security:
+ *       - bearerAuth: []
+ */
+export const getRestaurantWalletLedgerReport = async (
+  req: Request,
+  res: Response,
+): Promise<Response> => {
+  try {
+    const restaurant = (req as unknown as { restaurant?: { id: string } }).restaurant;
+    if (!restaurant?.id) {
+      return errorResponse(res, 'Restaurant context missing', 500);
+    }
+    const page = Math.max(1, parseInt(String(req.query.page ?? '1'), 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit ?? '10'), 10) || 10));
+    const startRaw = req.query.startDate ? String(req.query.startDate) : undefined;
+    const endRaw = req.query.endDate ? String(req.query.endDate) : undefined;
+    const startParsed = startRaw ? new Date(startRaw) : undefined;
+    const endParsed = endRaw ? new Date(endRaw) : undefined;
+    const startDate =
+      startParsed && !Number.isNaN(startParsed.getTime()) ? startParsed : undefined;
+    const endDate =
+      endParsed && !Number.isNaN(endParsed.getTime()) ? endParsed : undefined;
+    const data = await walletService.listRestaurantLedgerPaged({
+      restaurantId: restaurant.id,
+      page,
+      limit,
+      ...(startDate !== undefined ? { startDate } : {}),
+      ...(endDate !== undefined ? { endDate } : {}),
+    });
+    return successResponse(res, 'Restaurant ledger report', data);
+  } catch (error) {
+    console.error('getRestaurantWalletLedgerReport', error);
+    return errorResponse(res, 'Server error', 500);
+  }
+};
+
+/**
+ * @swagger
+ * /restaurants/account/wallet/transactions/stats:
+ *   get:
+ *     summary: Restaurant wallet ledger statistics (period + rolling counts)
+ *     tags: [Restaurant wallet]
+ *     security:
+ *       - bearerAuth: []
+ */
+export const getRestaurantWalletLedgerStats = async (
+  req: Request,
+  res: Response,
+): Promise<Response> => {
+  try {
+    const restaurant = (req as unknown as { restaurant?: { id: string } }).restaurant;
+    if (!restaurant?.id) {
+      return errorResponse(res, 'Restaurant context missing', 500);
+    }
+    const startRaw = req.query.startDate ? String(req.query.startDate) : undefined;
+    const endRaw = req.query.endDate ? String(req.query.endDate) : undefined;
+    const startParsed = startRaw ? new Date(startRaw) : undefined;
+    const endParsed = endRaw ? new Date(endRaw) : undefined;
+    const startDate =
+      startParsed && !Number.isNaN(startParsed.getTime()) ? startParsed : undefined;
+    const endDate =
+      endParsed && !Number.isNaN(endParsed.getTime()) ? endParsed : undefined;
+    const data = await walletService.getRestaurantLedgerStats({
+      restaurantId: restaurant.id,
+      ...(startDate !== undefined ? { startDate } : {}),
+      ...(endDate !== undefined ? { endDate } : {}),
+    });
+    return successResponse(res, 'Restaurant ledger stats', data);
+  } catch (error) {
+    console.error('getRestaurantWalletLedgerStats', error);
+    return errorResponse(res, 'Server error', 500);
+  }
+};
+
+/**
+ * @swagger
  * /restaurants/account/wallet/top-up/payment-intent:
  *   post:
  *     summary: Create Stripe PaymentIntent to top up restaurant wallet
