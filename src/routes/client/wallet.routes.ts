@@ -129,7 +129,9 @@ router.post('/withdrawals/:id/cancel', cancelUserWalletWithdrawal);
 
 router.post(
   '/withdrawals',
-  body('amount').isFloat({ gt: 0 }),
+  body('amount')
+    .isFloat({ min: 200 })
+    .withMessage('MIN_WITHDRAWAL_200_EUR'),
   body('currency').optional().isString().isLength({ min: 3, max: 3 }),
   body('accountInfo').isObject(),
   validateRequest,

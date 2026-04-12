@@ -187,7 +187,9 @@ router.post(
   authenticateUser,
   verifyRestaurantOwnership,
   walletMutationRateLimiter,
-  body('amount').isFloat({ gt: 0 }),
+  body('amount')
+    .isFloat({ min: 200 })
+    .withMessage('MIN_WITHDRAWAL_200_EUR'),
   body('accountInfo').isObject(),
   validateRequest,
   requestRestaurantWalletWithdrawal,

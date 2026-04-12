@@ -21,6 +21,9 @@ const LARGE_PAYMENT_EUR = new Prisma.Decimal(1000);
 const RAPID_WINDOW_MS = 60_000;
 const RAPID_MAX_OPS = 8;
 
+/** Self-service withdrawal requests (user / restaurant) must be at least this amount in EUR. Smaller payouts only via admin. */
+export const MIN_SELF_SERVICE_WITHDRAWAL_EUR = new Prisma.Decimal(200);
+
 export class InsufficientBalanceError extends Error {
   constructor() {
     super('INSUFFICIENT_BALANCE');
@@ -88,6 +91,17 @@ export class WalletService {
     return flags as unknown as Prisma.InputJsonValue;
   }
 
+  /** In-app withdrawal flow: minimum 200 EUR (wallet currency EUR). */
+  private assertMinSelfServiceWithdrawal(amount: Prisma.Decimal, currency: string): void {
+    const ccy = (currency || 'EUR').toUpperCase();
+    if (ccy !== 'EUR') {
+      throw new WalletValidationError('SELF_SERVICE_WITHDRAWAL_EUR_ONLY');
+    }
+    if (amount.lt(MIN_SELF_SERVICE_WITHDRAWAL_EUR)) {
+      throw new WalletValidationError('MIN_WITHDRAWAL_200_EUR');
+    }
+  }
+
   async getUserWalletBalance(userId: string): Promise<{
     balance: string;
     currency: string;
@@ -108,6 +122,292 @@ export class WalletService {
       return { balance: '0', currency: 'EUR' };
     }
     return { balance: formatWalletAmountForApi(row.balance), currency: row.currency };
+  }
+
+  async getUserWalletBalanceDetailForAdmin(userId: string): Promise<{
+    user: {
+      id: string;
+      email: string;
+      fullName: string | null;
+      role: string;
+      isActive: boolean;
+      createdAt: Date;
+      isRestaurant: boolean;
+    };
+    wallet: {
+      currency: string;
+      availableBalance: string;
+      ledgerCompletedBalance: string;
+      pendingWithdrawalHold: string;
+    };
+    minSelfServiceWithdrawalEur: string;
+  }> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        fullName: true,
+        role: true,
+        isActive: true,
+        createdAt: true,
+        isRestaurant: true,
+      },
+    });
+    if (!user) {
+      throw new WalletValidationError('USER_NOT_FOUND');
+    }
+
+    const walletRow = await this.prisma.wallet.findUnique({
+      where: { ownerType_ownerId: { ownerType: 'USER', ownerId: userId } },
+    });
+    let currency = 'EUR';
+    let ledgerCompleted = new Prisma.Decimal(0);
+    let pendingHold = new Prisma.Decimal(0);
+    if (walletRow) {
+      currency = walletRow.currency;
+      ledgerCompleted = await this.repo.getBalance(this.prisma, walletRow.id);
+      pendingHold = await this.repo.sumPendingWithdrawalHolds(this.prisma, walletRow.id);
+    }
+    const availRow = await this.repo.getAvailableBalanceByOwner('USER', userId);
+    const available = availRow?.balance ?? new Prisma.Decimal(0);
+    if (availRow) {
+      currency = availRow.currency;
+    }
+
+    return {
+      user,
+      wallet: {
+        currency,
+        availableBalance: formatWalletAmountForApi(available),
+        ledgerCompletedBalance: formatWalletAmountForApi(ledgerCompleted),
+        pendingWithdrawalHold: formatWalletAmountForApi(pendingHold),
+      },
+      minSelfServiceWithdrawalEur: formatWalletAmountForApi(MIN_SELF_SERVICE_WITHDRAWAL_EUR),
+    };
+  }
+
+  async getRestaurantWalletBalanceDetailForAdmin(restaurantId: string): Promise<{
+    restaurant: {
+      id: string;
+      name: string;
+      isActive: boolean;
+      currency: string | null;
+      owner: { id: string; email: string; fullName: string | null };
+    };
+    wallet: {
+      currency: string;
+      availableBalance: string;
+      ledgerCompletedBalance: string;
+      pendingWithdrawalHold: string;
+    };
+    minSelfServiceWithdrawalEur: string;
+  }> {
+    const restaurant = await this.prisma.restaurant.findUnique({
+      where: { id: restaurantId },
+      select: {
+        id: true,
+        name: true,
+        isActive: true,
+        currency: true,
+        owner: { select: { id: true, email: true, fullName: true } },
+      },
+    });
+    if (!restaurant) {
+      throw new WalletValidationError('RESTAURANT_NOT_FOUND');
+    }
+
+    const walletRow = await this.prisma.wallet.findUnique({
+      where: { ownerType_ownerId: { ownerType: 'RESTAURANT', ownerId: restaurantId } },
+    });
+    let currency = restaurant.currency?.toUpperCase() || 'EUR';
+    let ledgerCompleted = new Prisma.Decimal(0);
+    let pendingHold = new Prisma.Decimal(0);
+    if (walletRow) {
+      currency = walletRow.currency;
+      ledgerCompleted = await this.repo.getBalance(this.prisma, walletRow.id);
+      pendingHold = await this.repo.sumPendingWithdrawalHolds(this.prisma, walletRow.id);
+    }
+    const availRow = await this.repo.getAvailableBalanceByOwner('RESTAURANT', restaurantId);
+    const available = availRow?.balance ?? new Prisma.Decimal(0);
+    if (availRow) {
+      currency = availRow.currency;
+    }
+
+    return {
+      restaurant: {
+        id: restaurant.id,
+        name: restaurant.name,
+        isActive: restaurant.isActive,
+        currency: restaurant.currency,
+        owner: restaurant.owner,
+      },
+      wallet: {
+        currency,
+        availableBalance: formatWalletAmountForApi(available),
+        ledgerCompletedBalance: formatWalletAmountForApi(ledgerCompleted),
+        pendingWithdrawalHold: formatWalletAmountForApi(pendingHold),
+      },
+      minSelfServiceWithdrawalEur: formatWalletAmountForApi(MIN_SELF_SERVICE_WITHDRAWAL_EUR),
+    };
+  }
+
+  /** App customers (role USER) for admin wallet UI pickers. */
+  async listAppUsersForAdminWalletSelect(params: {
+    search?: string;
+    take?: number;
+  }): Promise<{
+    items: Array<{ id: string; email: string; fullName: string | null }>;
+  }> {
+    const take = Math.min(Math.max(params.take ?? 200, 1), 300);
+    const q = params.search?.trim();
+    const where: Prisma.UserWhereInput = { role: 'USER' };
+    if (q && q.length > 0) {
+      where.OR = [
+        { email: { contains: q, mode: 'insensitive' } },
+        { fullName: { contains: q, mode: 'insensitive' } },
+      ];
+    }
+    const items = await this.prisma.user.findMany({
+      where,
+      select: { id: true, email: true, fullName: true },
+      orderBy: { email: 'asc' },
+      take,
+    });
+    return { items };
+  }
+
+  /** Restaurants for admin wallet UI pickers. */
+  async listRestaurantsForAdminWalletSelect(params: {
+    search?: string;
+    take?: number;
+  }): Promise<{
+    items: Array<{ id: string; name: string; ownerEmail: string }>;
+  }> {
+    const take = Math.min(Math.max(params.take ?? 200, 1), 300);
+    const q = params.search?.trim();
+    const where: Prisma.RestaurantWhereInput = {};
+    if (q && q.length > 0) {
+      where.OR = [
+        { name: { contains: q, mode: 'insensitive' } },
+        { owner: { email: { contains: q, mode: 'insensitive' } } },
+      ];
+    }
+    const rows = await this.prisma.restaurant.findMany({
+      where,
+      select: { id: true, name: true, owner: { select: { email: true } } },
+      orderBy: { name: 'asc' },
+      take,
+    });
+    return {
+      items: rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        ownerEmail: r.owner.email,
+      })),
+    };
+  }
+
+  async adminManualWalletDebit(params: {
+    adminId: string;
+    ownerType: WalletOwnerType;
+    ownerId: string;
+    amount: Prisma.Decimal;
+    currency?: string;
+    note?: string | null;
+    idempotencyKey?: string | null;
+  }): Promise<{ availableBalanceAfter: string; currency: string }> {
+    if (params.amount.lte(0)) {
+      throw new WalletValidationError('Amount must be positive');
+    }
+    if (params.ownerType !== 'USER' && params.ownerType !== 'RESTAURANT') {
+      throw new WalletValidationError('Invalid owner type');
+    }
+
+    if (params.ownerType === 'USER') {
+      const exists = await this.prisma.user.findUnique({
+        where: { id: params.ownerId },
+        select: { id: true },
+      });
+      if (!exists) {
+        throw new WalletValidationError('USER_NOT_FOUND');
+      }
+    } else {
+      const exists = await this.prisma.restaurant.findUnique({
+        where: { id: params.ownerId },
+        select: { id: true },
+      });
+      if (!exists) {
+        throw new WalletValidationError('RESTAURANT_NOT_FOUND');
+      }
+    }
+
+    const curr = params.currency ?? 'EUR';
+    const idemRaw = params.idempotencyKey?.trim();
+    const idem =
+      idemRaw && idemRaw.length > 0 ? `admin_manual_debit_${idemRaw}` : null;
+
+    if (idem) {
+      const existing = await this.prisma.walletLedgerEntry.findUnique({
+        where: { idempotencyKey: idem },
+      });
+      if (existing) {
+        const row = await this.repo.getAvailableBalanceByOwner(
+          params.ownerType,
+          params.ownerId,
+        );
+        return {
+          availableBalanceAfter: row
+            ? formatWalletAmountForApi(row.balance)
+            : '0',
+          currency: row?.currency ?? curr,
+        };
+      }
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      const wallet = await this.repo.getOrCreateWallet(tx, params.ownerType, params.ownerId, curr);
+      const available = await this.repo.getAvailableBalance(tx, wallet.id);
+      if (available.lt(params.amount)) {
+        throw new InsufficientBalanceError();
+      }
+
+      await this.repo.createLedgerEntry(tx, {
+        walletId: wallet.id,
+        type: 'DEBIT',
+        amount: params.amount,
+        status: 'COMPLETED',
+        source: 'ADMIN',
+        referenceId: params.adminId,
+        ...(idem ? { idempotencyKey: idem } : {}),
+        metadata: {
+          adminManualDebit: true,
+          adminId: params.adminId,
+          note: params.note ?? undefined,
+        } as Prisma.InputJsonValue,
+      });
+    });
+
+    const row = await this.repo.getAvailableBalanceByOwner(params.ownerType, params.ownerId);
+    const after = row?.balance ?? new Prisma.Decimal(0);
+
+    await this.audit.log({
+      userId: params.adminId,
+      action: 'ADMIN_WALLET_MANUAL_DEBIT',
+      metadata: {
+        ownerType: params.ownerType,
+        ownerId: params.ownerId,
+        amount: params.amount.toString(),
+        currency: curr,
+        note: params.note ?? null,
+        ...(idem ? { idempotencyKey: idem } : {}),
+      } as Prisma.InputJsonValue,
+    });
+
+    return {
+      availableBalanceAfter: formatWalletAmountForApi(after),
+      currency: row?.currency ?? curr,
+    };
   }
 
   async listUserLedger(userId: string, take: number, cursor?: string) {
@@ -588,13 +888,15 @@ export class WalletService {
       throw new WalletValidationError('Amount must be positive');
     }
 
+    const currency = params.currency ?? 'EUR';
+    this.assertMinSelfServiceWithdrawal(params.amount, currency);
+
     const fraud = await this.fraudHints({
       userId: params.userId,
       amount: params.amount,
       ip: params.ipAddress ?? null,
     });
 
-    const currency = params.currency ?? 'EUR';
     const w = await this.prisma.$transaction(async (tx) => {
       const wallet = await this.repo.getOrCreateWallet(tx, 'USER', params.userId, currency);
       const available = await this.repo.getAvailableBalance(tx, wallet.id);
@@ -665,13 +967,15 @@ export class WalletService {
       throw new WalletValidationError('Amount must be positive');
     }
 
+    const currency = params.currency ?? 'EUR';
+    this.assertMinSelfServiceWithdrawal(params.amount, currency);
+
     const fraud = await this.fraudHints({
       userId: params.ownerUserId,
       amount: params.amount,
       ip: params.ipAddress ?? null,
     });
 
-    const currency = params.currency ?? 'EUR';
     const w = await this.prisma.$transaction(async (tx) => {
       const wallet = await this.repo.getOrCreateWallet(
         tx,
