@@ -1,8 +1,11 @@
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { successResponse, errorResponse } from '../../utils/response';
+import { WalletRepository } from '../../wallet/repositories/wallet.repository';
+import { formatWalletAmountForApi } from '../../wallet/utils/formatAmount';
 
 const prisma = new PrismaClient();
+const walletRepo = new WalletRepository(prisma);
 
 /**
  * @swagger
@@ -315,6 +318,7 @@ export const getRestaurantOverview = async (req: Request, res: Response) => {
 
     // Get recent activities
     const recentActivities = await getRecentActivities(restaurantId);
+    const walletBalance = await walletRepo.getAvailableBalanceByOwner('RESTAURANT', restaurantId);
 
     const overview = {
       restaurant: {
@@ -335,6 +339,10 @@ export const getRestaurantOverview = async (req: Request, res: Response) => {
         revenueGrowthPercentage: parseFloat(revenueGrowthPercentage),
         activeCustomers: activeCustomers.length,
         averageRating,
+      },
+      wallet: {
+        balance: walletBalance ? formatWalletAmountForApi(walletBalance.balance) : '0',
+        currency: walletBalance?.currency ?? 'EUR',
       },
       recentActivities,
     };
@@ -393,7 +401,7 @@ const getRecentActivities = async (restaurantId: string) => {
         type: 'qr_scan',
         message: `Customer ${scan.user.fullName || 'Unknown'} scanned QR code - ${scan.type} scan`,
         time: getTimeAgo(scan.createdAt),
-        points: scan.type === 'drink' ? 10 : 20, // Mock points
+        points: 1,
         createdAt: scan.createdAt,
       });
     });

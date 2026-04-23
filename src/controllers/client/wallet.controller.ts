@@ -1,5 +1,7 @@
 import { Request, Response } from 'express';
-import { PaymentInitiatedFrom, Prisma } from '@prisma/client';
+import { PaymentInitiatedFrom, Prisma, PrismaClient } from '@prisma/client';
+import bcrypt from 'bcrypt';
+import { randomBytes, timingSafeEqual } from 'crypto';
 import { errorResponse, successResponse } from '../../utils/response';
 import {
   walletService,
@@ -12,6 +14,79 @@ import {
 } from '../../wallet/services/paymentApproval.service';
 import { getStripeClient } from '../../lib/stripeClient';
 import { getClientIp, getDeviceInfo } from '../../wallet/utils/httpContext';
+import { sendNotificationToUser } from '../../services/notification.service';
+import { emitToUser } from '../../services/socket.service';
+import { normalizePaymentPinDigits } from '../../wallet/utils/normalizePinDigits';
+
+const prisma = new PrismaClient();
+const GIFT_APPROVAL_TTL_MS = 60_000;
+const ALLOWED_GIFT_VOUCHER_AMOUNTS = new Set([10, 20, 25, 50]);
+
+type GiftApprovalStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'EXPIRED';
+type GiftApprovalRequest = {
+  id: string;
+  token: string;
+  userId: string;
+  recipientUserId: string;
+  recipientName: string;
+  amount: Prisma.Decimal;
+  currency: string;
+  createdAt: Date;
+  expiresAt: Date;
+  status: GiftApprovalStatus;
+  idempotencyKey?: string | null;
+  initiatedFrom: PaymentInitiatedFrom;
+};
+
+const giftApprovalStore = new Map<string, GiftApprovalRequest>();
+const QR_PAYLOAD_PREFIX = 'LOLITY_USER:';
+
+type GiftRecipientQrPayload = {
+  userId?: string;
+  id?: string;
+  email?: string;
+  fullName?: string;
+  name?: string;
+};
+
+function extractRecipientUserId(recipientCodeRaw: string): string {
+  const raw = recipientCodeRaw.trim();
+  if (!raw) return '';
+  if (raw.startsWith(QR_PAYLOAD_PREFIX)) {
+    const jsonPart = raw.slice(QR_PAYLOAD_PREFIX.length);
+    try {
+      const parsed = JSON.parse(jsonPart) as GiftRecipientQrPayload;
+      return String(parsed.userId ?? parsed.id ?? '').trim();
+    } catch {
+      return '';
+    }
+  }
+  try {
+    const parsed = JSON.parse(raw) as GiftRecipientQrPayload;
+    return String(parsed.userId ?? parsed.id ?? '').trim();
+  } catch {
+    return raw;
+  }
+}
+
+function generateGiftApprovalToken(): string {
+  return randomBytes(32).toString('hex');
+}
+
+function safeEqualGiftToken(stored: string, given: string): boolean {
+  const a = Buffer.from(stored, 'utf8');
+  const b = Buffer.from(given, 'utf8');
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+function cleanupExpiredGiftApprovals(now = new Date()): void {
+  for (const [id, req] of giftApprovalStore.entries()) {
+    if (req.status === 'PENDING' && req.expiresAt <= now) {
+      giftApprovalStore.set(id, { ...req, status: 'EXPIRED' });
+    }
+  }
+}
 
 /**
  * @swagger
@@ -533,6 +608,437 @@ export const rejectWalletPayRestaurant = async (req: Request, res: Response): Pr
       return errorResponse(res, e.message, 404);
     }
     console.error('rejectWalletPayRestaurant', e);
+    return errorResponse(res, 'Server error', 500);
+  }
+};
+
+/**
+ * @swagger
+ * /client/wallet/gift-voucher:
+ *   post:
+ *     summary: Gift fixed-value EUR voucher to another user
+ *     description: |
+ *       Transfers money from the authenticated user's wallet to another USER wallet only.
+ *       Recipient is identified by `recipientCode` (recipient user id from scanned code).
+ *       Allowed amounts are fixed to 10, 20, 25, or 50 EUR.
+ *     tags: [Wallet]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - recipientCode
+ *               - amount
+ *             properties:
+ *               recipientCode:
+ *                 type: string
+ *                 description: Recipient identifier from scanned code (supports raw user id or rich QR payload)
+ *               amount:
+ *                 type: number
+ *                 enum: [10, 20, 25, 50]
+ *                 description: Fixed voucher amount in EUR
+ *               idempotencyKey:
+ *                 type: string
+ *                 minLength: 8
+ *                 maxLength: 200
+ *                 description: Optional key to safely retry the same gift request
+ *     responses:
+ *       200:
+ *         description: Voucher gifted successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     senderBalanceAfter:
+ *                       type: string
+ *                       description: Sender remaining wallet balance after gift
+ *       400:
+ *         description: Invalid amount, insufficient balance, self-gift, or invalid recipient
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: Recipient not found
+ *       500:
+ *         description: Server error
+ */
+export const giftWalletVoucher = async (req: Request, res: Response): Promise<Response> => {
+  try {
+    const senderUserId = req.user!.id;
+    const { recipientCode, amount, idempotencyKey, initiatedFrom } = req.body as {
+      recipientCode?: string;
+      amount?: number;
+      idempotencyKey?: string;
+      initiatedFrom?: string;
+    };
+
+    if (!recipientCode || amount == null) {
+      return errorResponse(res, 'recipientCode and amount are required', 400);
+    }
+    if (!ALLOWED_GIFT_VOUCHER_AMOUNTS.has(Number(amount))) {
+      return errorResponse(res, 'amount must be one of 10, 20, 25, 50', 400);
+    }
+
+    const recipientIdFromCode = extractRecipientUserId(recipientCode);
+    const recipientLookupCode = recipientIdFromCode || recipientCode;
+
+    const recipient = await prisma.user.findFirst({
+      where: {
+        OR: [{ id: recipientLookupCode }, { qrCode: recipientLookupCode }],
+      },
+      select: { id: true, fullName: true, role: true },
+    });
+    if (!recipient) {
+      return errorResponse(res, 'Recipient not found', 404);
+    }
+    if (recipient.role !== 'USER') {
+      return errorResponse(res, 'Recipient must be a user account', 400);
+    }
+    if (recipient.id === senderUserId) {
+      return errorResponse(res, 'Cannot gift voucher to yourself', 400);
+    }
+
+    const sender = await prisma.user.findUnique({
+      where: { id: senderUserId },
+      select: { pinHash: true },
+    });
+    if (!sender?.pinHash) {
+      return errorResponse(
+        res,
+        'Set a payment PIN in the mobile app before gifting vouchers from web.',
+        428,
+      );
+    }
+
+    cleanupExpiredGiftApprovals();
+    const now = new Date();
+    let channel: PaymentInitiatedFrom = PaymentInitiatedFrom.WEB;
+    if (initiatedFrom === 'MOBILE' || initiatedFrom === 'mobile') {
+      channel = PaymentInitiatedFrom.MOBILE;
+    }
+    const headerChannel = String(req.headers['x-client-channel'] ?? '').toLowerCase();
+    if (headerChannel === 'mobile') channel = PaymentInitiatedFrom.MOBILE;
+    if (headerChannel === 'web') channel = PaymentInitiatedFrom.WEB;
+
+    if (idempotencyKey && idempotencyKey.trim().length > 0) {
+      const existing = Array.from(giftApprovalStore.values()).find(
+        (x) =>
+          x.userId === senderUserId &&
+          x.idempotencyKey === idempotencyKey &&
+          x.status === 'PENDING' &&
+          x.expiresAt > now,
+      );
+      if (existing) {
+        emitToUser(senderUserId, 'NEW_GIFT_VOUCHER_REQUEST', {
+          approvalId: existing.id,
+          approvalToken: existing.token,
+          recipientUserId: existing.recipientUserId,
+          recipientName: existing.recipientName,
+          amount: existing.amount.toString(),
+          currency: existing.currency,
+          expiresAt: existing.expiresAt.toISOString(),
+          initiatedFrom: existing.initiatedFrom,
+        });
+        return successResponse(res, 'Awaiting mobile approval', {
+          approvalId: existing.id,
+          approvalToken: existing.token,
+          recipientUserId: existing.recipientUserId,
+          recipientName: existing.recipientName,
+          amount: existing.amount.toString(),
+          currency: existing.currency,
+          expiresAt: existing.expiresAt.toISOString(),
+          initiatedFrom: existing.initiatedFrom,
+        });
+      }
+    }
+
+    const approvalId = randomBytes(16).toString('hex');
+    const approvalToken = generateGiftApprovalToken();
+    const expiresAt = new Date(now.getTime() + GIFT_APPROVAL_TTL_MS);
+    const approval: GiftApprovalRequest = {
+      id: approvalId,
+      token: approvalToken,
+      userId: senderUserId,
+      recipientUserId: recipient.id,
+      recipientName: recipient.fullName || 'recipient',
+      amount: new Prisma.Decimal(String(amount)),
+      currency: 'EUR',
+      createdAt: now,
+      expiresAt,
+      status: 'PENDING',
+      idempotencyKey: idempotencyKey ?? null,
+      initiatedFrom: channel,
+    };
+    giftApprovalStore.set(approvalId, approval);
+
+    emitToUser(senderUserId, 'NEW_GIFT_VOUCHER_REQUEST', {
+      approvalId,
+      approvalToken,
+      recipientUserId: approval.recipientUserId,
+      recipientName: approval.recipientName,
+      amount: approval.amount.toString(),
+      currency: approval.currency,
+      expiresAt: approval.expiresAt.toISOString(),
+      initiatedFrom: approval.initiatedFrom,
+    });
+
+    return successResponse(res, 'Awaiting mobile approval', {
+      approvalId,
+      approvalToken,
+      recipientUserId: approval.recipientUserId,
+      recipientName: approval.recipientName,
+      amount: approval.amount.toString(),
+      currency: approval.currency,
+      expiresAt: approval.expiresAt.toISOString(),
+      initiatedFrom: approval.initiatedFrom,
+    });
+  } catch (e: unknown) {
+    if (e instanceof InsufficientBalanceError) {
+      return errorResponse(res, 'Insufficient wallet balance', 400);
+    }
+    if (e instanceof WalletValidationError) {
+      return errorResponse(res, e.message, 400);
+    }
+    console.error('giftWalletVoucher', e);
+    return errorResponse(res, 'Server error', 500);
+  }
+};
+
+/**
+ * @swagger
+ * /client/wallet/gift-voucher/approve:
+ *   post:
+ *     summary: Approve pending wallet voucher gift from trusted mobile device
+ *     description: |
+ *       Finalizes a pending gift request created by POST /client/wallet/gift-voucher.
+ *       Requires approvalToken + trusted device context. PIN is required unless biometric is enabled and device is already trusted.
+ *     tags: [Wallet]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - approvalId
+ *               - approvalToken
+ *               - deviceId
+ *             properties:
+ *               approvalId:
+ *                 type: string
+ *               approvalToken:
+ *                 type: string
+ *               pin:
+ *                 type: string
+ *                 description: Optional when biometric-enabled trusted device is used
+ *               deviceId:
+ *                 type: string
+ *               deviceName:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Gift approved and transferred
+ *       400:
+ *         description: Invalid request, expired request, or PIN/trust validation failed
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: Pending approval not found
+ *       500:
+ *         description: Server error
+ */
+export const approveGiftWalletVoucher = async (req: Request, res: Response): Promise<Response> => {
+  try {
+    cleanupExpiredGiftApprovals();
+    const userId = req.user!.id;
+    const senderName = req.user?.fullName || 'User';
+    const {
+      approvalId,
+      approvalToken,
+      pin,
+      deviceId,
+      deviceName,
+    } = req.body as {
+      approvalId?: string;
+      approvalToken?: string;
+      pin?: string;
+      deviceId?: string;
+      deviceName?: string;
+    };
+
+    if (!approvalId || !approvalToken || !deviceId || String(deviceId).trim().length < 8) {
+      return errorResponse(res, 'approvalId, approvalToken, and valid deviceId are required', 400);
+    }
+
+    const row = giftApprovalStore.get(approvalId);
+    if (!row || row.userId !== userId) {
+      return errorResponse(res, 'Gift approval not found', 404);
+    }
+    if (row.status === 'APPROVED') {
+      const bal = await walletService.getUserWalletBalance(userId);
+      return successResponse(res, 'Gift already approved', { senderBalanceAfter: bal.balance });
+    }
+    if (row.status !== 'PENDING') {
+      return errorResponse(res, 'Approval is no longer pending', 400);
+    }
+    if (row.expiresAt <= new Date()) {
+      giftApprovalStore.set(approvalId, { ...row, status: 'EXPIRED' });
+      emitToUser(userId, 'GIFT_VOUCHER_REQUEST_RESOLVED', { approvalId, status: 'expired' });
+      return errorResponse(res, 'Approval expired', 400);
+    }
+    if (!safeEqualGiftToken(row.token, String(approvalToken).trim())) {
+      return errorResponse(res, 'Invalid approval token', 400);
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { pinHash: true, biometricEnabled: true },
+    });
+    if (!user?.pinHash) {
+      return errorResponse(res, 'Payment PIN not set', 400);
+    }
+
+    const normalizedDeviceId = String(deviceId).trim();
+    const trustedDevice = await prisma.userDevice.findUnique({
+      where: { userId_deviceId: { userId, deviceId: normalizedDeviceId } },
+      select: { isTrusted: true },
+    });
+    const isTrustedDevice = Boolean(trustedDevice?.isTrusted);
+
+    const providedPin = pin?.trim();
+    if (providedPin && providedPin.length > 0) {
+      const pinNorm = normalizePaymentPinDigits(providedPin);
+      const pinOk = await bcrypt.compare(pinNorm, user.pinHash);
+      if (!pinOk) {
+        return errorResponse(res, 'Invalid PIN', 400);
+      }
+    } else {
+      if (!user.biometricEnabled) {
+        return errorResponse(res, 'PIN required', 400);
+      }
+      if (!isTrustedDevice) {
+        return errorResponse(res, 'First approval on this device requires payment PIN', 400);
+      }
+    }
+
+    await prisma.userDevice.upsert({
+      where: { userId_deviceId: { userId, deviceId: normalizedDeviceId } },
+      create: {
+        userId,
+        deviceId: normalizedDeviceId,
+        deviceName: deviceName ?? null,
+        lastSeen: new Date(),
+      },
+      update: {
+        lastSeen: new Date(),
+        ...(deviceName != null && deviceName !== '' ? { deviceName } : {}),
+      },
+    });
+
+    const transfer = await walletService.giftVoucherToUser({
+      senderUserId: userId,
+      recipientUserId: row.recipientUserId,
+      amount: row.amount,
+      currency: row.currency,
+      idempotencyKey: `gift_approval_${row.id}`,
+      ipAddress: getClientIp(req),
+      deviceInfo: getDeviceInfo(req),
+    });
+
+    if (providedPin && providedPin.length > 0) {
+      await prisma.userDevice.updateMany({
+        where: { userId, deviceId: normalizedDeviceId },
+        data: { isTrusted: true },
+      });
+      await prisma.user.update({
+        where: { id: userId },
+        data: { trustedDeviceId: normalizedDeviceId },
+      });
+    }
+
+    giftApprovalStore.set(approvalId, { ...row, status: 'APPROVED' });
+    emitToUser(userId, 'GIFT_VOUCHER_REQUEST_RESOLVED', {
+      approvalId,
+      status: 'approved',
+      senderBalanceAfter: transfer.senderBalanceAfter,
+    });
+
+    const notificationResults = await Promise.allSettled([
+      sendNotificationToUser({
+        userId,
+        title: 'Voucher Sent',
+        body: `You sent ${row.amount.toString()} EUR to ${row.recipientName}`,
+        type: 'PAYMENT',
+      }),
+      sendNotificationToUser({
+        userId: row.recipientUserId,
+        title: 'Voucher Received',
+        body: `You received ${row.amount.toString()} EUR from ${senderName}`,
+        type: 'PAYMENT',
+      }),
+    ]);
+
+    if (notificationResults[0]?.status === 'rejected') {
+      try {
+        await sendNotificationToUser({
+          userId,
+          title: 'Voucher Sent',
+          body: `You sent ${row.amount.toString()} EUR to ${row.recipientName}`,
+          type: 'PAYMENT',
+        });
+      } catch (retryErr) {
+        console.error('approveGiftWalletVoucher sender notification retry failed', retryErr);
+      }
+    }
+
+    return successResponse(res, 'Voucher gifted successfully', transfer);
+  } catch (e: unknown) {
+    if (e instanceof InsufficientBalanceError) {
+      return errorResponse(res, 'Insufficient wallet balance', 400);
+    }
+    if (e instanceof WalletValidationError) {
+      return errorResponse(res, e.message, 400);
+    }
+    console.error('approveGiftWalletVoucher', e);
+    return errorResponse(res, 'Server error', 500);
+  }
+};
+
+export const rejectGiftWalletVoucher = async (req: Request, res: Response): Promise<Response> => {
+  try {
+    cleanupExpiredGiftApprovals();
+    const userId = req.user!.id;
+    const { approvalId } = req.body as { approvalId?: string };
+    if (!approvalId) {
+      return errorResponse(res, 'approvalId is required', 400);
+    }
+    const row = giftApprovalStore.get(approvalId);
+    if (!row || row.userId !== userId) {
+      return errorResponse(res, 'Gift approval not found', 404);
+    }
+    if (row.status === 'PENDING') {
+      giftApprovalStore.set(approvalId, { ...row, status: 'REJECTED' });
+      emitToUser(userId, 'GIFT_VOUCHER_REQUEST_RESOLVED', {
+        approvalId,
+        status: 'rejected',
+      });
+    }
+    return successResponse(res, 'Rejected', {});
+  } catch (e: unknown) {
+    console.error('rejectGiftWalletVoucher', e);
     return errorResponse(res, 'Server error', 500);
   }
 };

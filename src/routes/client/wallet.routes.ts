@@ -17,6 +17,9 @@ import {
   requestWalletPayRestaurant,
   approveWalletPayRestaurant,
   rejectWalletPayRestaurant,
+  giftWalletVoucher,
+  approveGiftWalletVoucher,
+  rejectGiftWalletVoucher,
 } from '../../controllers/client/wallet.controller';
 
 const router = Router();
@@ -112,6 +115,38 @@ router.post(
   body('approvalId').isUUID(),
   validateRequest,
   rejectWalletPayRestaurant,
+);
+
+router.post(
+  '/gift-voucher',
+  body('recipientCode').isUUID().withMessage('recipientCode must be a valid user id (UUID)'),
+  body('amount').isIn([10, 20, 25, 50]).withMessage('amount must be one of 10, 20, 25, 50'),
+  body('idempotencyKey').optional().isString().isLength({ min: 8, max: 200 }),
+  body('initiatedFrom').optional().isIn(['web', 'WEB', 'mobile', 'MOBILE']),
+  validateRequest,
+  giftWalletVoucher,
+);
+
+router.post(
+  '/gift-voucher/approve',
+  body('approvalId').isString().isLength({ min: 8, max: 128 }),
+  body('approvalToken').isString().isLength({ min: 32, max: 200 }),
+  body('pin')
+    .optional({ checkFalsy: true, nullable: true })
+    .isString()
+    .trim()
+    .isLength({ min: 6, max: 12 }),
+  body('deviceId').isString().isLength({ min: 8, max: 200 }),
+  body('deviceName').optional().isString().isLength({ max: 120 }),
+  validateRequest,
+  approveGiftWalletVoucher,
+);
+
+router.post(
+  '/gift-voucher/reject',
+  body('approvalId').isString().isLength({ min: 8, max: 128 }),
+  validateRequest,
+  rejectGiftWalletVoucher,
 );
 
 router.post(

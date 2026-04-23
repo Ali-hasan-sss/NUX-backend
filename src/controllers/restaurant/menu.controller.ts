@@ -109,7 +109,22 @@ export const createCategory = async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, message: 'Restaurant not found' });
     }
 
-    const { title, description, image } = req.body;
+    const { title, description, image, kitchenSectionId } = req.body;
+
+    if (kitchenSectionId !== undefined) {
+      const kitchenSection = await prisma.kitchenSection.findUnique({
+        where: { id: parseInt(String(kitchenSectionId), 10) },
+        include: { restaurant: true },
+      });
+      if (!kitchenSection) {
+        return res.status(404).json({ success: false, message: 'Kitchen section not found' });
+      }
+      if (kitchenSection.restaurant.userId !== userId) {
+        return res
+          .status(403)
+          .json({ success: false, message: 'You are not the owner of this kitchen section' });
+      }
+    }
 
     // Create a new menu category for the restaurant
     const category = await prisma.menuCategory.create({
@@ -120,6 +135,15 @@ export const createCategory = async (req: Request, res: Response) => {
         image,
       },
     });
+
+    // Optional: when a section is selected for this category, apply it to all its items.
+    // For a newly created category this is usually 0 rows, but keeps behavior consistent.
+    if (kitchenSectionId !== undefined) {
+      await prisma.menuItem.updateMany({
+        where: { categoryId: category.id },
+        data: { kitchenSectionId: parseInt(String(kitchenSectionId), 10) },
+      });
+    }
 
     // Return the newly created category
     res.status(201).json({ success: true, data: category });
@@ -179,7 +203,7 @@ export const updateCategory = async (req: Request, res: Response) => {
     }
 
     const { categoryId } = req.params;
-    const { title, description, image } = req.body;
+    const { title, description, image, kitchenSectionId } = req.body;
 
     if (!categoryId) {
       return res.status(400).json({ success: false, message: 'Category ID is required' });
@@ -202,11 +226,33 @@ export const updateCategory = async (req: Request, res: Response) => {
         .json({ success: false, message: 'You are not the owner of this restaurant' });
     }
 
+    if (kitchenSectionId !== undefined) {
+      const kitchenSection = await prisma.kitchenSection.findUnique({
+        where: { id: parseInt(String(kitchenSectionId), 10) },
+        include: { restaurant: true },
+      });
+      if (!kitchenSection) {
+        return res.status(404).json({ success: false, message: 'Kitchen section not found' });
+      }
+      if (kitchenSection.restaurant.userId !== userId) {
+        return res
+          .status(403)
+          .json({ success: false, message: 'You are not the owner of this kitchen section' });
+      }
+    }
+
     // Update the category
     const updatedCategory = await prisma.menuCategory.update({
       where: { id: parseInt(categoryId) },
       data: { title, description, image },
     });
+
+    if (kitchenSectionId !== undefined) {
+      await prisma.menuItem.updateMany({
+        where: { categoryId: parseInt(categoryId) },
+        data: { kitchenSectionId: parseInt(String(kitchenSectionId), 10) },
+      });
+    }
 
     res.json({ success: true, data: updatedCategory });
   } catch (err) {

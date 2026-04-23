@@ -3,11 +3,9 @@ import { body } from 'express-validator';
 import { authenticateUser } from '../../middlewares/Auth';
 import {
   getUserRestaurantsWithBalance,
-  giftBalance,
   listPublicPackages,
   payAtRestaurant,
   scanQrCode,
-  validateGiftRecipient,
 } from '../../controllers/client/balances.controller';
 import { validateRequest } from '../../middlewares/security';
 
@@ -42,23 +40,6 @@ router.post(
   body('amount').isFloat({ gt: 0 }).withMessage('amount must be greater than 0'),
   validateRequest,
   payAtRestaurant,
-);
-
-// GET validate gift recipient QR (user code only, not restaurant)
-router.get('/validate-gift-recipient', authenticateUser, validateGiftRecipient);
-
-// post gift with stars or balance to frind
-router.post(
-  '/gift',
-  authenticateUser,
-  body('targetId').isString().notEmpty().withMessage('targetId is required'),
-  body('qrCode').isString().notEmpty().withMessage('QR code is required'),
-  body('currencyType')
-    .isIn(['stars_meal', 'stars_drink'])
-    .withMessage('currencyType must be stars_meal or stars_drink (use /client/wallet for money)'),
-  body('amount').isFloat({ gt: 0 }).withMessage('amount must be greater than 0'),
-  validateRequest,
-  giftBalance,
 );
 
 router.get('/packages/:restaurantId', authenticateUser, validateRequest, listPublicPackages);

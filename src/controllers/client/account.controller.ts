@@ -7,6 +7,23 @@ import { v4 as uuidv4 } from 'uuid';
 
 const prisma = new PrismaClient();
 
+type UserQrPayload = {
+  userId: string;
+  email: string;
+  fullName?: string;
+};
+
+const QR_PAYLOAD_PREFIX = 'LOLITY_USER:';
+
+function buildUserQrPayload(user: { id: string; email: string; fullName: string | null }): string {
+  const payload: UserQrPayload = {
+    userId: user.id,
+    email: user.email,
+    ...(user.fullName ? { fullName: user.fullName } : {}),
+  };
+  return `${QR_PAYLOAD_PREFIX}${JSON.stringify(payload)}`;
+}
+
 /**
  * @swagger
  * tags:
@@ -45,7 +62,11 @@ export const getProfile = async (req: Request, res: Response) => {
       },
     });
     if (!user) return errorResponse(res, 'User not found', 404);
-    return successResponse(res, 'Profile retrieved successfully', user, 200);
+    const profileWithRichQr = {
+      ...user,
+      qrCode: buildUserQrPayload(user),
+    };
+    return successResponse(res, 'Profile retrieved successfully', profileWithRichQr, 200);
   } catch {
     return errorResponse(res, 'Server error', 500);
   }
@@ -141,12 +162,17 @@ export const updateProfile = async (req: Request, res: Response) => {
       },
     });
 
+    const updatedUserWithRichQr = {
+      ...updatedUser,
+      qrCode: buildUserQrPayload(updatedUser),
+    };
+
     return successResponse(
       res,
       email && email !== user.email
         ? 'Profile updated successfully. Please verify your new email.'
         : 'Profile updated successfully',
-      updatedUser,
+      updatedUserWithRichQr,
       200,
     );
   } catch (error) {

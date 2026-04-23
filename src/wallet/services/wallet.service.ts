@@ -876,6 +876,102 @@ export class WalletService {
     return result;
   }
 
+  /**
+   * Atomic transfer: user wallet -> user wallet (voucher gift).
+   * Allowed voucher values are enforced by caller/controller.
+   */
+  async giftVoucherToUser(params: {
+    senderUserId: string;
+    recipientUserId: string;
+    amount: Prisma.Decimal;
+    currency?: string;
+    idempotencyKey?: string | null;
+    ipAddress?: string | null;
+    deviceInfo?: string | null;
+  }): Promise<{ senderBalanceAfter: string }> {
+    if (params.amount.lte(0)) {
+      throw new WalletValidationError('Amount must be positive');
+    }
+    if (params.senderUserId === params.recipientUserId) {
+      throw new WalletValidationError('Cannot gift voucher to yourself');
+    }
+
+    const curr = params.currency ?? 'EUR';
+    const idem = params.idempotencyKey ? `wallet_gift_voucher_${params.idempotencyKey}` : undefined;
+    if (idem) {
+      const existing = await this.prisma.walletLedgerEntry.findUnique({
+        where: { idempotencyKey: idem },
+      });
+      if (existing) {
+        const bal = await this.repo.getAvailableBalanceByOwner('USER', params.senderUserId);
+        return {
+          senderBalanceAfter: bal ? formatWalletAmountForApi(bal.balance) : '0',
+        };
+      }
+    }
+
+    const result = await this.prisma.$transaction(
+      async (tx) => {
+        const senderWallet = await this.repo.getOrCreateWallet(tx, 'USER', params.senderUserId, curr);
+        const recipientWallet = await this.repo.getOrCreateWallet(tx, 'USER', params.recipientUserId, curr);
+
+        const senderBalance = await this.repo.getAvailableBalance(tx, senderWallet.id);
+        if (senderBalance.lt(params.amount)) {
+          throw new InsufficientBalanceError();
+        }
+
+        const metadata = {
+          senderUserId: params.senderUserId,
+          recipientUserId: params.recipientUserId,
+          giftType: 'MONEY_VOUCHER',
+        } as Prisma.InputJsonValue;
+
+        await this.repo.createLedgerEntry(tx, {
+          walletId: senderWallet.id,
+          type: 'DEBIT',
+          amount: params.amount,
+          status: 'COMPLETED',
+          source: 'ADMIN',
+          referenceId: params.recipientUserId,
+          idempotencyKey: idem ?? null,
+          metadata,
+        });
+
+        await this.repo.createLedgerEntry(tx, {
+          walletId: recipientWallet.id,
+          type: 'CREDIT',
+          amount: params.amount,
+          status: 'COMPLETED',
+          source: 'ADMIN',
+          referenceId: params.senderUserId,
+          metadata,
+        });
+
+        const after = await this.repo.getAvailableBalance(tx, senderWallet.id);
+        return { senderBalanceAfter: formatWalletAmountForApi(after) };
+      },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        maxWait: 5000,
+        timeout: 15000,
+      },
+    );
+
+    await this.audit.log({
+      userId: params.senderUserId,
+      action: 'WALLET_GIFT_VOUCHER',
+      ...(params.ipAddress != null && params.ipAddress !== '' ? { ipAddress: params.ipAddress } : {}),
+      ...(params.deviceInfo != null && params.deviceInfo !== '' ? { deviceInfo: params.deviceInfo } : {}),
+      metadata: {
+        recipientUserId: params.recipientUserId,
+        amount: params.amount.toString(),
+        currency: curr,
+      } as Prisma.InputJsonValue,
+    });
+
+    return result;
+  }
+
   async requestWithdrawal(params: {
     userId: string;
     amount: Prisma.Decimal;
