@@ -216,6 +216,78 @@ export interface SubscriptionReminderParams {
 /**
  * Send subscription renewal reminder email to restaurant owner (English).
  */
+export interface CompanyOwnerCredentialsEmailParams {
+  to: string;
+  loginEmail: string;
+  plainPassword: string;
+  fullName: string | null;
+  companyName: string;
+  employeeCount: number;
+  subscriptionPerEmployeeEur: string;
+  monthlySubscriptionTotalEur: string;
+  loginUrl?: string;
+}
+
+/**
+ * Welcome email for admin-created company owner: login email/password and expected monthly B2B fee (EUR).
+ */
+export const sendCompanyOwnerCredentialsEmail = async (params: CompanyOwnerCredentialsEmailParams) => {
+  const {
+    to,
+    loginEmail,
+    plainPassword,
+    fullName,
+    companyName,
+    employeeCount,
+    subscriptionPerEmployeeEur,
+    monthlySubscriptionTotalEur,
+  } = params;
+  const transporter = getTransporter();
+  const appName = getAppName();
+  const base = process.env.FRONTEND_URL || process.env.SITE_URL || 'https://nuxapp.de';
+  const loginUrl = params.loginUrl || `${base.replace(/\/$/, '')}/login`;
+
+  const esc = (s: string) =>
+    s
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+
+  const bodyHtml = `
+    <p style="margin:0 0 16px; font-size:15px; line-height:1.5; color:${BRAND.textMuted};">${
+      fullName ? `Hello <strong>${esc(fullName)}</strong>,` : 'Hello,'
+    }</p>
+    <p style="margin:0 0 16px; font-size:15px; line-height:1.5; color:${BRAND.textMuted};">Your company owner account for <strong>${esc(
+      companyName,
+    )}</strong> has been created on <strong>${esc(appName)}</strong>.</p>
+    <p style="margin:0 0 8px; font-size:14px; font-weight:600; color:${BRAND.text};">Sign-in</p>
+    <p style="margin:0 0 6px; font-size:14px; color:${BRAND.textMuted};"><strong>Email:</strong> <code style="background:${BRAND.bgFooter}; padding:2px 8px; border-radius:4px;">${esc(
+      loginEmail,
+    )}</code></p>
+    <p style="margin:0 0 20px; font-size:14px; color:${BRAND.textMuted};"><strong>Password:</strong> <code style="background:${BRAND.bgFooter}; padding:2px 8px; border-radius:4px; word-break:break-all;">${esc(
+      plainPassword,
+    )}</code></p>
+    <p style="margin:0 0 12px; font-size:14px; line-height:1.5; color:${BRAND.textMuted};"><strong>Monthly program fee (estimate)</strong> based on <strong>${employeeCount}</strong> employee(s) at <strong>${esc(
+      subscriptionPerEmployeeEur,
+    )}</strong> EUR per employee: <strong style="color:${BRAND.text}; font-size:18px;">${esc(
+      monthlySubscriptionTotalEur,
+    )} EUR</strong> / month.</p>
+    <p style="margin:0 0 20px; font-size:13px; color:${BRAND.textLight};">This fee applies while the company meal program is active; linked employees may differ from this headcount later.</p>
+    <p style="margin:0 0 20px;"><a href="${esc(loginUrl)}" style="display:inline-block; padding:12px 24px; background-color:${BRAND.primary}; color:#fff; text-decoration:none; border-radius:8px; font-weight:600;">Sign in</a></p>
+    <p style="margin:0; font-size:13px; color:${BRAND.textLight};">Please change your password after first login. If you did not expect this email, contact support.</p>`;
+  const html = buildBrandedEmail('Your company account', bodyHtml);
+
+  const subjectSafe = `${companyName}`.replace(/[\r\n]/g, ' ').slice(0, 200);
+  await transporter.sendMail({
+    from: getFrom(),
+    to,
+    subject: `Your ${appName} company owner login - ${subjectSafe}`,
+    text: `Company owner account for ${companyName}\nLogin: ${loginEmail}\nPassword: ${plainPassword}\nEstimated monthly fee: ${monthlySubscriptionTotalEur} EUR (${employeeCount} employees × ${subscriptionPerEmployeeEur} EUR).\nSign in: ${loginUrl}`,
+    html,
+  });
+};
+
 export const sendSubscriptionReminderEmail = async (params: SubscriptionReminderParams) => {
   const { to, restaurantName, planName, endDate, daysLeft } = params;
   const transporter = getTransporter();

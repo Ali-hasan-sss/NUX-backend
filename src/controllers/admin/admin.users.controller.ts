@@ -1,7 +1,8 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma, Role } from '@prisma/client';
 import { Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { errorResponse, successResponse } from '../../utils/response';
+import { sendCompanyOwnerCredentialsEmail } from '../../utils/email';
 
 const prisma = new PrismaClient();
 
@@ -24,7 +25,7 @@ const prisma = new PrismaClient();
  *         name: role
  *         schema:
  *           type: string
- *           enum: [USER, RESTAURANT_OWNER, ADMIN]
+ *           enum: [USER, RESTAURANT_OWNER, COMPANY_OWNER, ADMIN, SUBADMIN]
  *         description: Filter by role
  *       - in: query
  *         name: isActive
@@ -48,6 +49,18 @@ const prisma = new PrismaClient();
  *           type: integer
  *           default: 10
  *         description: Number of items per page
+ *       - in: query
+ *         name: hasCompany
+ *         schema:
+ *           type: string
+ *           enum: [true, false]
+ *         description: Filter users who own at least one company (true) or none (false). Best combined with role=COMPANY_OWNER.
+ *       - in: query
+ *         name: includeCompanies
+ *         schema:
+ *           type: string
+ *           enum: [true, false]
+ *         description: When true, each user includes a companiesOwned array (for company owners).
  *     responses:
  *       200:
  *         description: Users retrieved successfully with pagination
@@ -57,12 +70,20 @@ const prisma = new PrismaClient();
 export const getAllUsers = async (req: Request, res: Response) => {
   try {
     const currentUser = (req as any).user;
-    const { role, isActive, email, pageNumber = '1', pageSize = '10' } = req.query;
+    const {
+      role,
+      isActive,
+      email,
+      pageNumber = '1',
+      pageSize = '10',
+      hasCompany,
+      includeCompanies,
+    } = req.query;
 
-    const filters: any = {};
+    const filters: Record<string, unknown> = {};
 
     if (role) {
-      filters.role = role as string; // "USER" | "RESTAURANT_OWNER" | "ADMIN" | "SUBADMIN"
+      filters.role = role as string;
     }
 
     // Sub-admin with MANAGE_USERS must not see ADMIN users (only USER, RESTAURANT_OWNER, SUBADMIN)
@@ -84,24 +105,53 @@ export const getAllUsers = async (req: Request, res: Response) => {
       };
     }
 
+    if (hasCompany === 'true') {
+      filters.companiesOwned = { some: {} };
+    } else if (hasCompany === 'false') {
+      filters.companiesOwned = { none: {} };
+    }
+
     const page = Math.max(parseInt(pageNumber as string, 10), 1);
     const size = Math.max(parseInt(pageSize as string, 10), 1);
 
     const totalItems = await prisma.user.count({ where: filters });
     const totalPages = Math.ceil(totalItems / size);
 
+    const withCompanies = includeCompanies === 'true';
     const users = await prisma.user.findMany({
       where: filters,
       skip: (page - 1) * size,
       take: size,
-      select: {
-        id: true,
-        email: true,
-        fullName: true,
-        role: true,
-        isActive: true,
-        createdAt: true,
-      },
+      select: withCompanies
+        ? {
+            id: true,
+            email: true,
+            fullName: true,
+            role: true,
+            isActive: true,
+            createdAt: true,
+            companiesOwned: {
+              select: {
+                id: true,
+                name: true,
+                taxNumber: true,
+                commercialRegister: true,
+                reportedEmployeeCount: true,
+                subscriptionStatus: true,
+                monthlyAllowancePerEmployee: true,
+                subscriptionPerEmployeeEur: true,
+                createdAt: true,
+              },
+            },
+          }
+        : {
+            id: true,
+            email: true,
+            fullName: true,
+            role: true,
+            isActive: true,
+            createdAt: true,
+          },
       orderBy: { createdAt: 'desc' },
     });
 
@@ -252,6 +302,19 @@ export const getUserById = async (req: Request, res: Response) => {
             restaurant: true,
           },
         },
+        companiesOwned: {
+          select: {
+            id: true,
+            name: true,
+            taxNumber: true,
+            commercialRegister: true,
+            reportedEmployeeCount: true,
+            subscriptionStatus: true,
+            monthlyAllowancePerEmployee: true,
+            subscriptionPerEmployeeEur: true,
+            createdAt: true,
+          },
+        },
       },
     });
 
@@ -354,6 +417,172 @@ export const createUser = async (req: Request, res: Response) => {
       },
     });
     return successResponse(res, 'User created successfully', newUser, 201);
+  } catch (error) {
+    console.error(error);
+    errorResponse(res, 'Internal server error', 500);
+  }
+};
+
+/**
+ * @swagger
+ * /api/admin/users/company-owner:
+ *   post:
+ *     summary: Create a company owner user and their first company in one request
+ *     description: >
+ *       Admin creates the COMPANY_OWNER account and a linked Company record.
+ *       Sends a welcome email with login email, password, and estimated monthly B2B fee
+ *       (employeeCount × subscriptionPerEmployeeEur, default 1.75 EUR).
+ *     tags: [Users]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [email, password, company]
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *               password:
+ *                 type: string
+ *               fullName:
+ *                 type: string
+ *               isActive:
+ *                 type: boolean
+ *               company:
+ *                 type: object
+ *                 required: [name, taxNumber, commercialRegister, employeeCount]
+ *                 properties:
+ *                   name:
+ *                     type: string
+ *                   taxNumber:
+ *                     type: string
+ *                   commercialRegister:
+ *                     type: string
+ *                   employeeCount:
+ *                     type: integer
+ *                     description: Headcount used for the subscription estimate in the email (stored as reportedEmployeeCount)
+ *                   monthlyAllowancePerEmployee:
+ *                     type: string
+ *                     description: Decimal string, wallet EUR per employee per month
+ *                   subscriptionPerEmployeeEur:
+ *                     type: string
+ *                     default: "1.75"
+ *     responses:
+ *       201:
+ *         description: User and company created; credentials email queued
+ *       400:
+ *         description: Validation or duplicate email
+ */
+export const createCompanyOwnerWithCompany = async (req: Request, res: Response) => {
+  try {
+    const currentUser = (req as any).user;
+    const { email, password, fullName, isActive, company } = req.body as {
+      email: string;
+      password: string;
+      fullName?: string | null;
+      isActive?: boolean;
+      company: {
+        name: string;
+        taxNumber: string;
+        commercialRegister: string;
+        employeeCount: number;
+        monthlyAllowancePerEmployee?: string;
+        subscriptionPerEmployeeEur?: string;
+      };
+    };
+
+    const existing = await prisma.user.findUnique({ where: { email } });
+    if (existing) {
+      return errorResponse(res, 'Email already exists', 400);
+    }
+
+    const bcrypt = require('bcrypt');
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const rate = new Prisma.Decimal(company.subscriptionPerEmployeeEur ?? '1.75');
+    if (rate.lt(0)) {
+      return errorResponse(res, 'Invalid subscriptionPerEmployeeEur', 400);
+    }
+    const employeeCount = Math.max(0, Math.floor(Number(company.employeeCount)));
+    const monthlyFee = rate.mul(employeeCount);
+    const allowance = new Prisma.Decimal(company.monthlyAllowancePerEmployee ?? '0');
+
+    const result = await prisma.$transaction(async (tx) => {
+      const user = await tx.user.create({
+        data: {
+          email,
+          password: hashedPassword,
+          fullName: fullName ?? null,
+          role: Role.COMPANY_OWNER,
+          isActive: isActive !== false,
+          qrCode: uuidv4(),
+          emailVerified: new Date(),
+        },
+      });
+
+      const comp = await tx.company.create({
+        data: {
+          ownerId: user.id,
+          name: company.name.trim(),
+          taxNumber: company.taxNumber.trim(),
+          commercialRegister: company.commercialRegister.trim(),
+          reportedEmployeeCount: employeeCount,
+          monthlyAllowancePerEmployee: allowance,
+          subscriptionPerEmployeeEur: rate,
+          subscriptionStatus: 'DRAFT',
+        },
+      });
+
+      return { user, company: comp };
+    });
+
+    const monthlySubscriptionTotalEur = monthlyFee.toDecimalPlaces(2).toFixed(2);
+    const subscriptionPerEmployeeEurStr = rate.toDecimalPlaces(2).toFixed(2);
+
+    setImmediate(() => {
+      sendCompanyOwnerCredentialsEmail({
+        to: result.user.email,
+        loginEmail: result.user.email,
+        plainPassword: password,
+        fullName: result.user.fullName,
+        companyName: result.company.name,
+        employeeCount,
+        subscriptionPerEmployeeEur: subscriptionPerEmployeeEurStr,
+        monthlySubscriptionTotalEur: monthlySubscriptionTotalEur,
+      }).catch((err) => {
+        console.error('sendCompanyOwnerCredentialsEmail failed:', err);
+      });
+    });
+
+    return successResponse(
+      res,
+      'Company owner and company created successfully. Login details were sent by email.',
+      {
+        user: {
+          id: result.user.id,
+          email: result.user.email,
+          fullName: result.user.fullName,
+          role: result.user.role,
+          isActive: result.user.isActive,
+          createdAt: result.user.createdAt,
+          emailVerified: true,
+        },
+        company: {
+          id: result.company.id,
+          name: result.company.name,
+          taxNumber: result.company.taxNumber,
+          commercialRegister: result.company.commercialRegister,
+          reportedEmployeeCount: result.company.reportedEmployeeCount,
+          monthlyAllowancePerEmployee: result.company.monthlyAllowancePerEmployee.toString(),
+          subscriptionPerEmployeeEur: result.company.subscriptionPerEmployeeEur.toString(),
+          subscriptionStatus: result.company.subscriptionStatus,
+          estimatedMonthlySubscriptionEur: monthlySubscriptionTotalEur,
+        },
+      },
+      201,
+    );
   } catch (error) {
     console.error(error);
     errorResponse(res, 'Internal server error', 500);

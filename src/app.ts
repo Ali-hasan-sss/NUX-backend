@@ -13,6 +13,10 @@ import {
 } from './middlewares/security';
 import swaggerRoutes from './routes/swagger.routes';
 import { checkAndUpdateSubscriptions, startSubscriptionChecker } from './jobs/subscriptionChecker';
+import {
+  runCompanyMonthlyAllowancesJob,
+  startCompanyAllowanceJob,
+} from './jobs/companyAllowanceJob';
 import { stripeWebhook } from './controllers/restaurant/subscription.controller';
 
 dotenv.config();
@@ -29,6 +33,9 @@ app.use(generalRateLimiter);
 // Check subscriptions and start the job
 checkAndUpdateSubscriptions();
 startSubscriptionChecker();
+
+runCompanyMonthlyAllowancesJob();
+startCompanyAllowanceJob();
 
 // Basic middlewares
 app.use(cors({ origin: true, credentials: true }));

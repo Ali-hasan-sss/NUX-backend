@@ -6,6 +6,7 @@ import {
   refresh,
   verifyEmail,
   registerRestaurant,
+  registerCompanyOwner,
   requestPasswordReset,
   resetPassword,
   sendVerificationCode,
@@ -86,6 +87,23 @@ router.post(
   ],
   generalRateLimiter,
   registerRestaurant,
+);
+
+router.post(
+  '/registerCompanyOwner',
+  xssSanitizerMiddleware,
+  generalRateLimiter,
+  body('email').trim().normalizeEmail().isEmail().withMessage('Please provide a valid email'),
+  body('password')
+    .isLength({ min: 8 })
+    .withMessage('New password must be at least 8 characters')
+    .matches(/[0-9]/)
+    .withMessage('New password must contain a number')
+    .matches(/[A-Z]/)
+    .withMessage('New password must contain an uppercase letter'),
+  body('fullName').optional().isString().isLength({ max: 100 }),
+  validateRequest,
+  registerCompanyOwner,
 );
 
 // Login

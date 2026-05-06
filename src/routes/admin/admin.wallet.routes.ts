@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { body, query } from 'express-validator';
+import { body, param, query } from 'express-validator';
 import { authenticateUser } from '../../middlewares/Auth';
 import { isAdminMiddleware } from '../../middlewares/Authorization';
 import { validateRequest, walletAdminRateLimiter } from '../../middlewares/security';
@@ -11,9 +11,15 @@ import {
   getAdminWalletSelectRestaurants,
   getAdminWalletSelectUsers,
   listWalletWithdrawals,
+  postAdminManualWalletCredit,
   postAdminManualWalletDebit,
   rejectWalletWithdrawal,
 } from '../../controllers/admin/admin.wallet.controller';
+import {
+  createWalletTopUpBonusCampaign,
+  listWalletTopUpBonusCampaigns,
+  patchWalletTopUpBonusCampaign,
+} from '../../controllers/admin/admin.walletTopUpBonus.controller';
 
 const router = Router();
 
@@ -51,6 +57,38 @@ router.post(
   body('idempotencyKey').optional().isString().isLength({ min: 8, max: 200 }),
   validateRequest,
   postAdminManualWalletDebit,
+);
+router.post(
+  '/manual-credit',
+  body('ownerType').isIn(['USER', 'RESTAURANT']),
+  body('ownerId').isUUID(),
+  body('amount').isFloat({ gt: 0 }),
+  body('currency').optional().isString().isLength({ min: 3, max: 3 }),
+  body('note').optional().isString().isLength({ max: 2000 }),
+  body('idempotencyKey').optional().isString().isLength({ min: 8, max: 200 }),
+  validateRequest,
+  postAdminManualWalletCredit,
+);
+router.get('/top-up-bonuses', listWalletTopUpBonusCampaigns);
+router.post(
+  '/top-up-bonuses',
+  body('title').trim().notEmpty().withMessage('TITLE_REQUIRED'),
+  body('description').optional().isString().isLength({ max: 8000 }),
+  body('startsAt').isISO8601(),
+  body('endsAt').isISO8601(),
+  body('minTopUpAmount').isFloat({ gt: 0 }),
+  body('bonusType').isIn(['PERCENTAGE', 'FIXED']),
+  body('bonusValue').isFloat({ gt: 0 }),
+  body('sendNotification').optional().isBoolean(),
+  validateRequest,
+  createWalletTopUpBonusCampaign,
+);
+router.patch(
+  '/top-up-bonuses/:id',
+  param('id').isUUID(),
+  body('isActive').isBoolean(),
+  validateRequest,
+  patchWalletTopUpBonusCampaign,
 );
 router.get('/withdrawals', listWalletWithdrawals);
 router.post('/withdrawals/:id/approve', approveWalletWithdrawal);

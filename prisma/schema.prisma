@@ -45,6 +45,9 @@ model User {
   trustedDeviceId         String?
   paymentDevices          UserDevice[]
   paymentApprovals        PaymentApproval[]
+  walletTopUpBonusCampaignsCreated WalletTopUpBonusCampaign[] @relation("WalletTopUpBonusCampaignCreator")
+  companiesOwned          Company[]               @relation("CompanyOwner")
+  companyEmployments      CompanyEmployee[]
 }
 
 /// Sub-admin: added by main ADMIN only; has limited permissions in admin panel.
@@ -504,8 +507,17 @@ enum OrderStatus {
 enum Role {
   USER
   RESTAURANT_OWNER
+  COMPANY_OWNER
   ADMIN
   SUBADMIN
+}
+
+/// B2B company meal allowance program (owner role COMPANY_OWNER).
+enum CompanySubscriptionStatus {
+  DRAFT
+  ACTIVE
+  SUSPENDED
+  CANCELLED
 }
 
 enum SubscriptionStatus {
@@ -635,6 +647,7 @@ model PaymentApproval {
 enum WalletOwnerType {
   USER
   RESTAURANT
+  COMPANY
 }
 
 enum WalletLedgerEntryType {
@@ -654,6 +667,14 @@ enum WalletLedgerSource {
   ORDER
   WITHDRAWAL
   ADMIN
+  BONUS
+  COMPANY_ALLOWANCE
+  COMPANY_ALLOWANCE_PAYOUT
+}
+
+enum WalletTopUpBonusType {
+  PERCENTAGE
+  FIXED
 }
 
 enum WalletWithdrawalStatus {
@@ -701,6 +722,7 @@ model WalletWithdrawal {
   id           String                 @id @default(uuid())
   userId       String?
   restaurantId String?
+  companyId    String?
   amount       Decimal                  @db.Decimal(18, 4)
   currency     String                   @default("EUR")
   status       WalletWithdrawalStatus   @default(PENDING)
@@ -710,10 +732,83 @@ model WalletWithdrawal {
   createdAt    DateTime                 @default(now())
   user         User?                    @relation(fields: [userId], references: [id], onDelete: Cascade)
   restaurant   Restaurant?              @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  company      Company?                 @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([restaurantId])
+  @@index([companyId])
   @@index([status])
+}
+
+model Company {
+  id                          String                    @id @default(uuid())
+  ownerId                     String
+  name                        String
+  taxNumber                   String
+  commercialRegister          String
+  reportedEmployeeCount       Int                       @default(0)
+  monthlyAllowancePerEmployee Decimal                   @default(0) @db.Decimal(18, 4)
+  subscriptionPerEmployeeEur  Decimal                   @default(1.75) @db.Decimal(18, 4)
+  subscriptionStatus          CompanySubscriptionStatus @default(DRAFT)
+  stripeCustomerId            String?
+  createdAt                   DateTime                  @default(now())
+  updatedAt                   DateTime                  @updatedAt
+  owner                       User                      @relation("CompanyOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  employees                   CompanyEmployee[]
+  allowanceMonths             CompanyAllowanceMonth[]
+  walletWithdrawals           WalletWithdrawal[]
+
+  @@index([ownerId])
+}
+
+model CompanyEmployee {
+  id        String   @id @default(uuid())
+  companyId String
+  userId    String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, userId])
+  @@index([userId])
+}
+
+/// Idempotent monthly run: employee wallet credits + subscription fee snapshot (EUR).
+model CompanyAllowanceMonth {
+  id                     String   @id @default(uuid())
+  companyId              String
+  yearMonth              String
+  employeeCount          Int
+  allowancePerEmployee   Decimal  @db.Decimal(18, 4)
+  totalAllowanceCredited Decimal  @default(0) @db.Decimal(18, 4)
+  subscriptionFeeEur     Decimal  @db.Decimal(18, 4)
+  creditedAt             DateTime?
+  createdAt              DateTime @default(now())
+  company                Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, yearMonth])
+  @@index([yearMonth])
+}
+
+/// Time-limited bonus for app customers (role USER) on Stripe wallet top-ups (EUR).
+model WalletTopUpBonusCampaign {
+  id               String               @id @default(uuid())
+  title            String
+  description      String?              @db.Text
+  startsAt         DateTime
+  endsAt           DateTime
+  minTopUpAmount   Decimal              @db.Decimal(18, 4)
+  bonusType        WalletTopUpBonusType
+  bonusValue       Decimal              @db.Decimal(18, 4)
+  isActive         Boolean              @default(true)
+  createdById      String?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+  creator          User?                @relation("WalletTopUpBonusCampaignCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([startsAt, endsAt])
+  @@index([isActive])
 }
 
 model AuditLog {

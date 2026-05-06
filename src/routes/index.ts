@@ -34,6 +34,7 @@ import plansRoutes from './common/plans.routes';
 import restaurantsRoutes from './common/restaurants.routes';
 import contactRoutes from './common/contact.routes';
 import walletRoutes from './client/wallet.routes';
+import companyRoutes from './client/company.routes';
 import adminWalletRoutes from './admin/admin.wallet.routes';
 
 const router = Router();
@@ -51,6 +52,7 @@ router.use('/admin/invoices', adminInvoicesRoutes);
 router.use('/admin/overview', adminOverviewRoutes);
 router.use('/admin/notifications', adminNotificationsRoutes);
 router.use('/client/account', accountRoutes);
+router.use('/client/company', companyRoutes);
 router.use('/client/balance', balanceRoutes);
 router.use('/customer/menu', clientMenuRoutes);
 router.use('/customer/orders', clientOrderRoutes);

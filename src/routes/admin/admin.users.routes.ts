@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   getAllUsers,
   createUser,
+  createCompanyOwnerWithCompany,
   updateUser,
   deleteUser,
   getUserById,
@@ -22,7 +23,7 @@ router.get(
   [
     query('role')
       .optional()
-      .isIn(['USER', 'RESTAURANT_OWNER', 'ADMIN', 'SUBADMIN'])
+      .isIn(['USER', 'RESTAURANT_OWNER', 'COMPANY_OWNER', 'ADMIN', 'SUBADMIN'])
       .withMessage('Invalid role filter'),
     query('isActive').optional().isBoolean().withMessage('isActive must be true or false'),
     query('email').optional().isString().withMessage('Email filter must be a string'),
@@ -34,6 +35,14 @@ router.get(
       .optional()
       .isInt({ min: 1, max: 100 })
       .withMessage('pageSize must be between 1 and 100'),
+    query('hasCompany')
+      .optional()
+      .isIn(['true', 'false'])
+      .withMessage('hasCompany must be true or false'),
+    query('includeCompanies')
+      .optional()
+      .isIn(['true', 'false'])
+      .withMessage('includeCompanies must be true or false'),
   ],
   validateRequest,
   getAllUsers,
@@ -64,10 +73,46 @@ router.post(
     .withMessage('Full name must be a string')
     .isLength({ max: 100 })
     .withMessage('Full name is too long'),
-  body('role').optional().isIn(['USER', 'RESTAURANT_OWNER', 'ADMIN', 'SUBADMIN']).withMessage('Invalid role'),
+  body('role')
+    .optional()
+    .isIn(['USER', 'RESTAURANT_OWNER', 'COMPANY_OWNER', 'ADMIN', 'SUBADMIN'])
+    .withMessage('Invalid role'),
   body('isActive').optional().isBoolean().withMessage('isActive must be a boolean'),
   validateRequest,
   createUser,
+);
+
+router.post(
+  '/company-owner',
+  body('email').trim().normalizeEmail().isEmail().withMessage('Invalid email format'),
+  body('password')
+    .isLength({ min: 8 })
+    .withMessage('Password must be at least 8 characters')
+    .matches(/[0-9]/)
+    .withMessage('Password must contain a number')
+    .matches(/[A-Z]/)
+    .withMessage('Password must contain an uppercase letter'),
+  body('fullName')
+    .optional()
+    .isString()
+    .withMessage('Full name must be a string')
+    .isLength({ max: 100 })
+    .withMessage('Full name is too long'),
+  body('isActive').optional().isBoolean().withMessage('isActive must be a boolean'),
+  body('company').isObject().withMessage('company is required'),
+  body('company.name').trim().notEmpty().withMessage('company.name is required'),
+  body('company.taxNumber').trim().notEmpty().withMessage('company.taxNumber is required'),
+  body('company.commercialRegister')
+    .trim()
+    .notEmpty()
+    .withMessage('company.commercialRegister is required'),
+  body('company.employeeCount')
+    .isInt({ min: 0 })
+    .withMessage('company.employeeCount must be a non-negative integer'),
+  body('company.monthlyAllowancePerEmployee').optional().isString(),
+  body('company.subscriptionPerEmployeeEur').optional().isString(),
+  validateRequest,
+  createCompanyOwnerWithCompany,
 );
 
 // update user
@@ -85,7 +130,10 @@ router.put(
     .withMessage('Full name must be a string')
     .isLength({ max: 100 })
     .withMessage('Full name is too long'),
-  body('role').optional().isIn(['USER', 'RESTAURANT_OWNER', 'ADMIN', 'SUBADMIN']).withMessage('Invalid role'),
+  body('role')
+    .optional()
+    .isIn(['USER', 'RESTAURANT_OWNER', 'COMPANY_OWNER', 'ADMIN', 'SUBADMIN'])
+    .withMessage('Invalid role'),
   body('isActive').optional().isBoolean().withMessage('isActive must be a boolean'),
   validateRequest,
   updateUser,

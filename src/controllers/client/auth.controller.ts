@@ -414,6 +414,113 @@ export const registerRestaurant = async (req: Request, res: Response) => {
 
 /**
  * @swagger
+ * /auth/registerCompanyOwner:
+ *   post:
+ *     summary: Register a company owner account (B2B meal allowance program)
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *               - password
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *               password:
+ *                 type: string
+ *               fullName:
+ *                 type: string
+ *     responses:
+ *       201:
+ *         description: Company owner account created
+ *       400:
+ *         description: Validation error
+ */
+export const registerCompanyOwner = async (req: Request, res: Response) => {
+  try {
+    const { email, password, fullName } = req.body;
+
+    if (!email || !password) {
+      return errorResponse(res, 'Email and password are required', 400);
+    }
+
+    const strictEmailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    if (!strictEmailRegex.test(email)) {
+      return errorResponse(res, 'Invalid email format', 400);
+    }
+
+    if (password.length < 8) {
+      return errorResponse(res, 'Password must be at least 8 characters long', 400);
+    }
+
+    const existingUser = await prisma.user.findUnique({ where: { email } });
+    if (existingUser) {
+      return errorResponse(res, 'Registration failed. Please check your information', 400);
+    }
+
+    const hashedPassword = await hashPassword(password);
+    const qrCode = uuidv4();
+
+    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const verificationExpiry = new Date(Date.now() + 10 * 60 * 1000);
+
+    const user = await prisma.user.create({
+      data: {
+        email,
+        password: hashedPassword,
+        fullName: fullName || null,
+        role: Role.COMPANY_OWNER,
+        qrCode,
+        emailVerificationCode: verificationCode,
+        emailVerificationExpiry: verificationExpiry,
+      },
+    });
+
+    const refreshToken = generateRefreshToken({ userId: user.id, role: user.role });
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { refreshToken },
+    });
+
+    setImmediate(() => {
+      sendEmailVerificationCode(user.email, verificationCode).catch((err) => {
+        console.error('Send verification email error (company owner):', err);
+      });
+    });
+
+    const accessToken = generateAccessToken({ userId: user.id, role: user.role });
+
+    return successResponse(
+      res,
+      'Account created successfully',
+      {
+        user: {
+          id: user.id,
+          email: user.email,
+          fullName: user.fullName,
+          role: user.role,
+          emailVerified: false,
+        },
+        tokens: {
+          accessToken,
+          refreshToken,
+        },
+      },
+      201,
+    );
+  } catch (error) {
+    console.error('Register company owner error:', error);
+    return errorResponse(res, 'An unexpected error occurred', 500);
+  }
+};
+
+/**
+ * @swagger
  * /auth/login:
  *   post:
  *     summary: Login regular user

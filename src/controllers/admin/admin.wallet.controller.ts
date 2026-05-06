@@ -19,6 +19,8 @@ import {
  *       are included separately; restaurant payouts do not reduce user wallet balances.
  *       Restaurant wallet ledger (balance, credits, debits) is returned per currency so owner top-ups and payouts
  *       are visible separately from user-wallet figures.
+ *       Each block includes per-source credit totals (STRIPE, PAYPAL, ORDER, ADMIN manual credit, BONUS promo gifts)
+ *       and ADMIN manual debit totals for monitoring inflows vs staff adjustments.
  *     tags: [Wallet (Admin)]
  *     security:
  *       - bearerAuth: []
@@ -525,6 +527,101 @@ export const postAdminManualWalletDebit = async (req: Request, res: Response) =>
       return errorResponse(res, e.message, 400);
     }
     console.error('postAdminManualWalletDebit', e);
+    return errorResponse(res, 'Server error', 500);
+  }
+};
+
+/**
+ * @swagger
+ * /admin/wallet/manual-credit:
+ *   post:
+ *     summary: Manual wallet credit / top-up (admin)
+ *     description: >
+ *       Credits available balance on a USER or RESTAURANT wallet (ledger CREDIT, source ADMIN).
+ *       Optional idempotencyKey avoids duplicate credits when retried.
+ *     tags: [Wallet (Admin)]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [ownerType, ownerId, amount]
+ *             properties:
+ *               ownerType:
+ *                 type: string
+ *                 enum: [USER, RESTAURANT]
+ *               ownerId:
+ *                 type: string
+ *                 format: uuid
+ *               amount:
+ *                 type: number
+ *                 exclusiveMinimum: 0
+ *               currency:
+ *                 type: string
+ *                 minLength: 3
+ *                 maxLength: 3
+ *                 description: Defaults to EUR if omitted
+ *               note:
+ *                 type: string
+ *                 maxLength: 2000
+ *               idempotencyKey:
+ *                 type: string
+ *                 minLength: 8
+ *                 maxLength: 200
+ *     responses:
+ *       200:
+ *         description: Credit applied; returns availableBalanceAfter and currency
+ *       400:
+ *         description: Validation or owner not found
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Not admin
+ *       500:
+ *         description: Server error
+ */
+export const postAdminManualWalletCredit = async (req: Request, res: Response) => {
+  try {
+    const adminId = req.user!.id;
+    const { ownerType, ownerId, amount, currency, note, idempotencyKey } = req.body as {
+      ownerType?: string;
+      ownerId?: string;
+      amount?: number;
+      currency?: string;
+      note?: string;
+      idempotencyKey?: string;
+    };
+    if (ownerType !== 'USER' && ownerType !== 'RESTAURANT') {
+      return errorResponse(res, 'ownerType must be USER or RESTAURANT', 400);
+    }
+    if (!ownerId || typeof ownerId !== 'string') {
+      return errorResponse(res, 'ownerId required', 400);
+    }
+    if (amount == null || !Number.isFinite(Number(amount)) || Number(amount) <= 0) {
+      return errorResponse(res, 'amount must be a positive number', 400);
+    }
+    const amt = new Prisma.Decimal(String(amount));
+    const payload: Parameters<typeof walletService.adminManualWalletCredit>[0] = {
+      adminId,
+      ownerType: ownerType as WalletOwnerType,
+      ownerId,
+      amount: amt,
+      note: typeof note === 'string' ? note : null,
+      idempotencyKey: typeof idempotencyKey === 'string' ? idempotencyKey : null,
+    };
+    if (typeof currency === 'string' && currency.length > 0) {
+      payload.currency = currency;
+    }
+    const out = await walletService.adminManualWalletCredit(payload);
+    return successResponse(res, 'Manual credit applied', out);
+  } catch (e: unknown) {
+    if (e instanceof WalletValidationError) {
+      return errorResponse(res, e.message, 400);
+    }
+    console.error('postAdminManualWalletCredit', e);
     return errorResponse(res, 'Server error', 500);
   }
 };
