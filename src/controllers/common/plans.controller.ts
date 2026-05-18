@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import { successResponse, errorResponse } from '../../utils/response';
 
 const prisma = new PrismaClient();
+const FREE_TRIAL_PLAN_TITLE = 'Free Trial';
 
 /**
  * @swagger
@@ -63,6 +64,10 @@ export const getAllPlans = async (req: Request, res: Response) => {
     const plans = await prisma.plan.findMany({
       where: {
         isActive: true,
+        price: { gt: 0 },
+        NOT: {
+          title: FREE_TRIAL_PLAN_TITLE,
+        },
       },
       include: {
         permissions: {
@@ -74,9 +79,7 @@ export const getAllPlans = async (req: Request, res: Response) => {
           },
         },
       },
-      orderBy: {
-        price: 'asc',
-      },
+      orderBy: [{ displayOrder: 'asc' }, { price: 'asc' }, { id: 'asc' }],
     });
 
     return successResponse(res, 'Plans retrieved successfully', plans);
@@ -163,6 +166,10 @@ export const getPlanById = async (req: Request, res: Response) => {
       where: {
         id: planId,
         isActive: true,
+        price: { gt: 0 },
+        NOT: {
+          title: FREE_TRIAL_PLAN_TITLE,
+        },
       },
       include: {
         permissions: {

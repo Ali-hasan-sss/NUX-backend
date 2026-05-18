@@ -50,6 +50,8 @@ async function main() {
                 title: freePlanTitle,
                 description: '7-day free trial plan',
                 price: 0,
+                monthlyPrice: 0,
+                annualPrice: 0,
                 duration: 7,
                 isActive: true,
             },
@@ -57,6 +59,20 @@ async function main() {
         console.log('✅ Free plan created:', createdPlan.title);
     }
     else {
+        await prisma.plan.update({
+            where: { id: freePlan.id },
+            data: {
+                price: 0,
+                monthlyPrice: 0,
+                annualPrice: 0,
+                duration: 7,
+                isActive: true,
+                stripeProductId: null,
+                stripePriceId: null,
+                stripeMonthlyPriceId: null,
+                stripeAnnualPriceId: null,
+            },
+        });
         console.log('⚠️ Free plan already exists:', freePlan.title);
     }
 }

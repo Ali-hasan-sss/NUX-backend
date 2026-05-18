@@ -38,6 +38,18 @@ enum PermissionType {
   MAX_GROUP_MEMBERS = 'MAX_GROUP_MEMBERS',
 }
 const prisma = new PrismaClient();
+const FREE_TRIAL_PLAN_TITLE = 'Free Trial';
+
+function isFreeTrialPlanTitle(title: string | null | undefined): boolean {
+  return title?.trim().toLowerCase() === FREE_TRIAL_PLAN_TITLE.toLowerCase();
+}
+
+type StripePlanData = {
+  productId: string | null;
+  priceId: string | null;
+  monthlyPriceId: string | null;
+  annualPriceId: string | null;
+};
 
 function isMissingStripeResource(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
@@ -59,6 +71,8 @@ const createStripeProductAndPrice = async (
   price: number,
   currency: string,
   duration: number,
+  monthlyPrice = price,
+  annualPrice = price * 12,
 ) => {
   try {
     // Don't create Stripe product for free plans
@@ -66,6 +80,8 @@ const createStripeProductAndPrice = async (
       return {
         productId: null,
         priceId: null,
+        monthlyPriceId: null,
+        annualPriceId: null,
       };
     }
 
@@ -79,23 +95,39 @@ const createStripeProductAndPrice = async (
       },
     });
 
-    // Create Stripe price (recurring monthly)
-    const stripePrice = await stripe.prices.create({
+    const monthlyStripePrice = await stripe.prices.create({
       product: product.id,
-      unit_amount: Math.round(price * 100), // Convert to cents
+      unit_amount: Math.round(monthlyPrice * 100),
       currency: currency.toLowerCase(),
       recurring: {
         interval: 'month',
-        interval_count: Math.ceil(duration / 30), // Convert days to months
+        interval_count: 1,
       },
       metadata: {
         plan_duration_days: duration.toString(),
+        billing_cycle: 'monthly',
+      },
+    });
+
+    const annualStripePrice = await stripe.prices.create({
+      product: product.id,
+      unit_amount: Math.round(annualPrice * 100),
+      currency: currency.toLowerCase(),
+      recurring: {
+        interval: 'year',
+        interval_count: 1,
+      },
+      metadata: {
+        plan_duration_days: '365',
+        billing_cycle: 'annual',
       },
     });
 
     return {
       productId: product.id,
-      priceId: stripePrice.id,
+      priceId: monthlyStripePrice.id,
+      monthlyPriceId: monthlyStripePrice.id,
+      annualPriceId: annualStripePrice.id,
     };
   } catch (error) {
     console.error('Error creating Stripe product/price:', error);
@@ -113,6 +145,8 @@ const updateStripeProductAndPrice = async (
   price: number,
   currency: string,
   duration: number,
+  monthlyPrice = price,
+  annualPrice = price * 12,
 ) => {
   try {
     // Don't update Stripe for free plans
@@ -120,11 +154,21 @@ const updateStripeProductAndPrice = async (
       return {
         productId: null,
         priceId: null,
+        monthlyPriceId: null,
+        annualPriceId: null,
       };
     }
 
     if (!productId) {
-      return createStripeProductAndPrice(title, description, price, currency, duration);
+      return createStripeProductAndPrice(
+        title,
+        description,
+        price,
+        currency,
+        duration,
+        monthlyPrice,
+        annualPrice,
+      );
     }
 
     // Update existing Stripe product
@@ -142,26 +186,50 @@ const updateStripeProductAndPrice = async (
 
       // Existing plans may contain test-mode Stripe IDs. When running with live keys,
       // recreate the product/price and replace those stale IDs instead of blocking edits.
-      return createStripeProductAndPrice(title, description, price, currency, duration);
+      return createStripeProductAndPrice(
+        title,
+        description,
+        price,
+        currency,
+        duration,
+        monthlyPrice,
+        annualPrice,
+      );
     }
 
-    // Create new price (Stripe prices are immutable, so we create a new one)
-    const stripePrice = await stripe.prices.create({
+    const monthlyStripePrice = await stripe.prices.create({
       product: productId,
-      unit_amount: Math.round(price * 100), // Convert to cents
+      unit_amount: Math.round(monthlyPrice * 100),
       currency: currency.toLowerCase(),
       recurring: {
         interval: 'month',
-        interval_count: Math.ceil(duration / 30), // Convert days to months
+        interval_count: 1,
       },
       metadata: {
         plan_duration_days: duration.toString(),
+        billing_cycle: 'monthly',
+      },
+    });
+
+    const annualStripePrice = await stripe.prices.create({
+      product: productId,
+      unit_amount: Math.round(annualPrice * 100),
+      currency: currency.toLowerCase(),
+      recurring: {
+        interval: 'year',
+        interval_count: 1,
+      },
+      metadata: {
+        plan_duration_days: '365',
+        billing_cycle: 'annual',
       },
     });
 
     return {
       productId,
-      priceId: stripePrice.id,
+      priceId: monthlyStripePrice.id,
+      monthlyPriceId: monthlyStripePrice.id,
+      annualPriceId: annualStripePrice.id,
     };
   } catch (error) {
     console.error('Error updating Stripe product/price:', error);
@@ -202,9 +270,13 @@ async function archiveStripeProduct(productId: string | null): Promise<void> {
 export const getAllPlans = async (req: Request, res: Response) => {
   try {
     const plans = (await prisma.plan.findMany({
+      where: {
+        isActive: true,
+      },
       include: {
         permissions: true,
       },
+      orderBy: [{ displayOrder: 'asc' }, { price: 'asc' }, { id: 'asc' }],
     })) as any;
     return successResponse(res, 'Plans retrieved successfully', plans);
   } catch (error) {
@@ -300,12 +372,40 @@ export const getPlanById = async (req: Request, res: Response) => {
  */
 export const createPlan = async (req: Request, res: Response) => {
   try {
-    const { title, description, currency, price, duration, permissions = [] } = req.body;
-    const finalPrice = Number(price);
+    const {
+      title,
+      description,
+      currency,
+      price,
+      monthlyPrice,
+      annualPrice,
+      displayOrder,
+      permissions = [],
+    } = req.body;
+    const finalMonthlyPrice = Number(monthlyPrice ?? price);
+    const finalAnnualPrice = Number(annualPrice ?? finalMonthlyPrice * 12);
+    const finalPrice = finalMonthlyPrice;
+    const finalDuration = 30;
 
-    let stripeData: { productId: string | null; priceId: string | null } = {
+    if (finalPrice <= 0 || isFreeTrialPlanTitle(title)) {
+      return errorResponse(
+        res,
+        'Free trial plan is system-managed and is created only by seed',
+        400,
+      );
+    }
+
+    const finalDisplayOrder =
+      displayOrder !== undefined
+        ? Number(displayOrder)
+        : ((await prisma.plan.aggregate({ _max: { displayOrder: true } }))._max.displayOrder ??
+            0) + 1;
+
+    let stripeData: StripePlanData = {
       productId: null,
       priceId: null,
+      monthlyPriceId: null,
+      annualPriceId: null,
     };
 
     // Only create Stripe product and price if the plan is not free (price > 0)
@@ -315,7 +415,9 @@ export const createPlan = async (req: Request, res: Response) => {
         description,
         finalPrice,
         currency,
-        Number(duration),
+        finalDuration,
+        finalMonthlyPrice,
+        finalAnnualPrice,
       );
     }
 
@@ -324,10 +426,15 @@ export const createPlan = async (req: Request, res: Response) => {
         title,
         description,
         price: finalPrice,
+        monthlyPrice: finalMonthlyPrice,
+        annualPrice: finalAnnualPrice,
         currency,
-        duration: Number(duration),
+        duration: finalDuration,
+        displayOrder: finalDisplayOrder,
         stripeProductId: stripeData.productId,
         stripePriceId: stripeData.priceId,
+        stripeMonthlyPriceId: stripeData.monthlyPriceId,
+        stripeAnnualPriceId: stripeData.annualPriceId,
         permissions: {
           create: permissions.map((permission: any) => ({
             type: permission.type as PermissionType,
@@ -405,28 +512,73 @@ export const createPlan = async (req: Request, res: Response) => {
 export const updatePlan = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { title, description, currency, price, duration, isActive, permissions } = req.body;
+    const {
+      title,
+      description,
+      currency,
+      price,
+      monthlyPrice,
+      annualPrice,
+      displayOrder,
+      isActive,
+      permissions,
+    } = req.body;
 
     const plan = await prisma.plan.findUnique({ where: { id: Number(id) } });
     if (!plan) return errorResponse(res, 'Plan not found', 404);
 
-    const finalTitle = title ?? plan.title;
+    const isFreeTrialPlan = isFreeTrialPlanTitle(plan.title);
+    const finalTitle = isFreeTrialPlan ? FREE_TRIAL_PLAN_TITLE : (title ?? plan.title);
     const finalDescription = description ?? plan.description;
-    const finalPrice = price !== undefined ? Number(price) : plan.price;
+    const finalMonthlyPrice =
+      isFreeTrialPlan
+        ? 0
+        : monthlyPrice !== undefined
+        ? Number(monthlyPrice)
+        : price !== undefined
+          ? Number(price)
+          : (plan.monthlyPrice ?? plan.price);
+    const finalAnnualPrice =
+      isFreeTrialPlan
+        ? 0
+        : annualPrice !== undefined
+          ? Number(annualPrice)
+          : (plan.annualPrice ?? finalMonthlyPrice * 12);
+    const finalPrice = finalMonthlyPrice;
     const finalCurrency = currency ?? plan.currency;
-    const finalDuration = duration !== undefined ? Number(duration) : plan.duration;
+    const finalDuration = isFreeTrialPlan ? 7 : 30;
+    const finalDisplayOrder =
+      displayOrder !== undefined ? Number(displayOrder) : plan.displayOrder;
+
+    if (!isFreeTrialPlan && (finalPrice <= 0 || isFreeTrialPlanTitle(finalTitle))) {
+      return errorResponse(
+        res,
+        'Only the system-managed Free Trial plan can be free',
+        400,
+      );
+    }
 
     // Check if price, currency, or duration changed (need to update Stripe)
-    const priceChanged = price !== undefined && Number(price) !== plan.price;
+    const priceChanged =
+      (monthlyPrice !== undefined && Number(monthlyPrice) !== (plan.monthlyPrice ?? plan.price)) ||
+      (annualPrice !== undefined && Number(annualPrice) !== (plan.annualPrice ?? finalMonthlyPrice * 12)) ||
+      (price !== undefined && Number(price) !== plan.price);
     const currencyChanged = currency !== undefined && currency !== plan.currency;
-    const durationChanged = duration !== undefined && Number(duration) !== plan.duration;
+    const durationChanged = plan.duration !== finalDuration;
     const needsStripeUpdate =
       priceChanged || currencyChanged || durationChanged || title !== undefined;
 
-    let stripeData = null;
+    let stripeData: StripePlanData | null = isFreeTrialPlan
+      ? {
+          productId: null,
+          priceId: null,
+          monthlyPriceId: null,
+          annualPriceId: null,
+        }
+      : null;
 
     // Only update Stripe if the plan is not free (price > 0)
-    if (needsStripeUpdate && finalPrice > 0) {
+    if (!isFreeTrialPlan && needsStripeUpdate && finalPrice > 0) {
       stripeData = await updateStripeProductAndPrice(
         plan.stripeProductId,
         finalTitle,
@@ -434,12 +586,16 @@ export const updatePlan = async (req: Request, res: Response) => {
         finalPrice,
         finalCurrency,
         finalDuration,
+        finalMonthlyPrice,
+        finalAnnualPrice,
       );
     } else if (needsStripeUpdate && finalPrice === 0) {
       // For free plans, clear Stripe data if it exists
       stripeData = {
         productId: null,
         priceId: null,
+        monthlyPriceId: null,
+        annualPriceId: null,
       };
     }
 
@@ -447,15 +603,24 @@ export const updatePlan = async (req: Request, res: Response) => {
       title: finalTitle,
       description: finalDescription,
       price: finalPrice,
+      monthlyPrice: finalMonthlyPrice,
+      annualPrice: finalAnnualPrice,
       currency: finalCurrency,
-      isActive: isActive !== undefined ? Boolean(isActive) : plan.isActive,
+      isActive: isFreeTrialPlan
+        ? true
+        : isActive !== undefined
+          ? Boolean(isActive)
+          : plan.isActive,
       duration: finalDuration,
+      displayOrder: finalDisplayOrder,
     };
 
     // Add Stripe IDs if updated
     if (stripeData) {
       updateData.stripeProductId = stripeData.productId;
       updateData.stripePriceId = stripeData.priceId;
+      updateData.stripeMonthlyPriceId = stripeData.monthlyPriceId;
+      updateData.stripeAnnualPriceId = stripeData.annualPriceId;
     }
 
     // Handle permissions update if provided
@@ -516,6 +681,10 @@ export const deletePlan = async (req: Request, res: Response) => {
     const plan = await prisma.plan.findUnique({ where: { id: Number(id) } });
     if (!plan) return errorResponse(res, 'Plan not found', 404);
 
+    if (isFreeTrialPlanTitle(plan.title)) {
+      return errorResponse(res, 'Free trial plan is system-managed and cannot be deleted', 400);
+    }
+
     await archiveStripeProduct(plan.stripeProductId);
 
     const subscriptionsCount = await prisma.subscription.count({
@@ -529,6 +698,8 @@ export const deletePlan = async (req: Request, res: Response) => {
           isActive: false,
           stripeProductId: null,
           stripePriceId: null,
+          stripeMonthlyPriceId: null,
+          stripeAnnualPriceId: null,
         },
         include: { permissions: true },
       });

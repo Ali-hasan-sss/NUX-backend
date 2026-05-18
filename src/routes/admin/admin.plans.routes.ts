@@ -43,12 +43,17 @@ router.post(
     .isLength({ min: 2, max: 10000 })
     .withMessage('description must be between 2 and 100 characters'),
   body('price').isFloat({ gt: 0 }).withMessage('Price must be greater than 0'),
+  body('monthlyPrice').optional().isFloat({ gt: 0 }).withMessage('Monthly price must be greater than 0'),
+  body('annualPrice').optional().isFloat({ gt: 0 }).withMessage('Annual price must be greater than 0'),
   body('currency')
     .isString()
     .withMessage('Plan currency is required')
     .isLength({ min: 1, max: 50 })
     .withMessage('Plan currency is mast be 1-50 char'),
-  body('duration').isInt({ gt: 0 }).withMessage('Duration must be a positive integer (days)'),
+  body('displayOrder')
+    .optional()
+    .isInt({ min: 0 })
+    .withMessage('Display order must be 0 or greater'),
   validateRequest,
   createPlan,
 );
@@ -70,15 +75,17 @@ router.put(
     .isLength({ min: 2, max: 10000 })
     .withMessage('description must be between 2 and 100 characters'),
   body('price').isFloat({ min: 0 }).withMessage('Price must be 0 or greater'),
+  body('monthlyPrice').optional().isFloat({ min: 0 }).withMessage('Monthly price must be 0 or greater'),
+  body('annualPrice').optional().isFloat({ min: 0 }).withMessage('Annual price must be 0 or greater'),
   body('isActive').optional().isBoolean().withMessage('isActive must be boolean value'),
   body('currency')
     .optional({ nullable: true }) // allow empty for free plan
     .isLength({ min: 1, max: 50 })
     .withMessage('Plan currency must be 1-50 char'),
-  body('duration')
+  body('displayOrder')
     .optional()
-    .isInt({ gt: 0 })
-    .withMessage('Duration must be a positive integer (days)'),
+    .isInt({ min: 0 })
+    .withMessage('Display order must be 0 or greater'),
   validateRequest,
   updatePlan,
 );

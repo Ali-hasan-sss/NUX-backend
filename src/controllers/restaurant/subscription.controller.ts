@@ -40,9 +40,13 @@ async function createStripeProductAndPriceForPlan(plan: {
   title: string;
   description: string | null;
   price: number;
+  monthlyPrice: number | null;
+  annualPrice: number | null;
   currency: string | null;
   duration: number;
 }) {
+  const monthlyPrice = plan.monthlyPrice ?? plan.price;
+  const annualPrice = plan.annualPrice ?? monthlyPrice * 12;
   const product = await stripe.products.create({
     name: plan.title,
     ...(plan.description && { description: plan.description }),
@@ -53,17 +57,33 @@ async function createStripeProductAndPriceForPlan(plan: {
     },
   });
 
-  const price = await stripe.prices.create({
+  const monthlyStripePrice = await stripe.prices.create({
     product: product.id,
-    unit_amount: Math.round(plan.price * 100),
+    unit_amount: Math.round(monthlyPrice * 100),
     currency: (plan.currency || 'EUR').toLowerCase(),
     recurring: {
       interval: 'month',
-      interval_count: Math.max(1, Math.ceil(plan.duration / 30)),
+      interval_count: 1,
     },
     metadata: {
       planId: String(plan.id),
       plan_duration_days: String(plan.duration),
+      billing_cycle: 'monthly',
+    },
+  });
+
+  const annualStripePrice = await stripe.prices.create({
+    product: product.id,
+    unit_amount: Math.round(annualPrice * 100),
+    currency: (plan.currency || 'EUR').toLowerCase(),
+    recurring: {
+      interval: 'year',
+      interval_count: 1,
+    },
+    metadata: {
+      planId: String(plan.id),
+      plan_duration_days: '365',
+      billing_cycle: 'annual',
     },
   });
 
@@ -71,11 +91,16 @@ async function createStripeProductAndPriceForPlan(plan: {
     where: { id: plan.id },
     data: {
       stripeProductId: product.id,
-      stripePriceId: price.id,
+      stripePriceId: monthlyStripePrice.id,
+      stripeMonthlyPriceId: monthlyStripePrice.id,
+      stripeAnnualPriceId: annualStripePrice.id,
     },
   });
 
-  return price.id;
+  return {
+    monthlyPriceId: monthlyStripePrice.id,
+    annualPriceId: annualStripePrice.id,
+  };
 }
 
 async function ensureStripePriceForPlan(plan: {
@@ -83,22 +108,33 @@ async function ensureStripePriceForPlan(plan: {
   title: string;
   description: string | null;
   price: number;
+  monthlyPrice: number | null;
+  annualPrice: number | null;
   currency: string | null;
   duration: number;
   stripePriceId: string | null;
-}) {
-  if (!plan.stripePriceId) {
-    return createStripeProductAndPriceForPlan(plan);
+  stripeMonthlyPriceId: string | null;
+  stripeAnnualPriceId: string | null;
+}, billingCycle: 'monthly' | 'annual') {
+  const wantedPriceId =
+    billingCycle === 'annual'
+      ? plan.stripeAnnualPriceId
+      : plan.stripeMonthlyPriceId || plan.stripePriceId;
+
+  if (!wantedPriceId) {
+    const prices = await createStripeProductAndPriceForPlan(plan);
+    return billingCycle === 'annual' ? prices.annualPriceId : prices.monthlyPriceId;
   }
 
   try {
-    await stripe.prices.retrieve(plan.stripePriceId);
-    return plan.stripePriceId;
+    await stripe.prices.retrieve(wantedPriceId);
+    return wantedPriceId;
   } catch (error) {
     if (!isMissingStripeResource(error)) throw error;
 
     // Seeded/test-mode plans can point to prices that do not exist in live mode.
-    return createStripeProductAndPriceForPlan(plan);
+    const prices = await createStripeProductAndPriceForPlan(plan);
+    return billingCycle === 'annual' ? prices.annualPriceId : prices.monthlyPriceId;
   }
 }
 
@@ -181,14 +217,16 @@ export const createCheckoutSession = async (req: Request, res: Response) => {
     const userId = req.user?.id;
     if (!userId) return errorResponse(res, 'User not found', 401);
 
-    const { planId, successUrl, cancelUrl, provider } = req.body as {
+    const { planId, successUrl, cancelUrl, provider, billingCycle } = req.body as {
       planId: number;
       successUrl?: string;
       cancelUrl?: string;
       provider?: 'stripe' | 'paypal';
+      billingCycle?: 'monthly' | 'annual';
     };
     if (!planId) return errorResponse(res, 'planId is required', 400);
     const paymentProvider = provider === 'paypal' ? 'paypal' : 'stripe';
+    const selectedBillingCycle = billingCycle === 'annual' ? 'annual' : 'monthly';
 
     const restaurant = await prisma.restaurant.findFirst({ where: { userId } });
     if (!restaurant) return errorResponse(res, 'Restaurant not found', 404);
@@ -243,7 +281,7 @@ export const createCheckoutSession = async (req: Request, res: Response) => {
       const returnUrl = successUrl || `${appBase}/dashboard/subscription?status=success&provider=paypal`;
 
       const { orderId, approvalUrl } = await createPayPalOrder({
-        amount: plan.price,
+        amount: selectedBillingCycle === 'annual' ? (plan.annualPrice ?? plan.price * 12) : (plan.monthlyPrice ?? plan.price),
         currency: plan.currency || 'EUR',
         description: plan.title,
         returnUrl,
@@ -254,7 +292,7 @@ export const createCheckoutSession = async (req: Request, res: Response) => {
         data: {
           userId,
           restaurantId: restaurant.id,
-          amount: plan.price,
+          amount: selectedBillingCycle === 'annual' ? (plan.annualPrice ?? plan.price * 12) : (plan.monthlyPrice ?? plan.price),
           currency: plan.currency || 'EUR',
           method: 'paypal',
           status: 'created',
@@ -266,7 +304,8 @@ export const createCheckoutSession = async (req: Request, res: Response) => {
       });
 
       const now = new Date();
-      const endDate = new Date(now.getTime() + plan.duration * 24 * 60 * 60 * 1000);
+      const durationDays = selectedBillingCycle === 'annual' ? 365 : 30;
+      const endDate = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
       await prisma.subscription.create({
         data: {
           restaurantId: restaurant.id,
@@ -276,6 +315,7 @@ export const createCheckoutSession = async (req: Request, res: Response) => {
           status: 'PENDING',
           paymentId: payment.id,
           paymentStatus: 'unpaid',
+          billingCycle: selectedBillingCycle,
         },
       });
 
@@ -283,7 +323,7 @@ export const createCheckoutSession = async (req: Request, res: Response) => {
     }
 
     // --- Stripe flow ---
-    const stripePriceId = await ensureStripePriceForPlan(plan);
+    const stripePriceId = await ensureStripePriceForPlan(plan, selectedBillingCycle);
     const stripeCustomerId = await ensureStripeCustomerForRestaurant(restaurant);
 
     const session = await stripe.checkout.sessions.create({
@@ -297,6 +337,7 @@ export const createCheckoutSession = async (req: Request, res: Response) => {
       metadata: {
         restaurantId: restaurant.id,
         planId: String(plan.id),
+        billingCycle: selectedBillingCycle,
       },
     });
 
@@ -305,7 +346,7 @@ export const createCheckoutSession = async (req: Request, res: Response) => {
       data: {
         userId,
         restaurantId: restaurant.id,
-        amount: plan.price,
+        amount: selectedBillingCycle === 'annual' ? (plan.annualPrice ?? plan.price * 12) : (plan.monthlyPrice ?? plan.price),
         currency: plan.currency || 'EUR',
         method: 'stripe',
         status: 'created',
@@ -317,7 +358,8 @@ export const createCheckoutSession = async (req: Request, res: Response) => {
     });
 
     const now = new Date();
-    const endDate = new Date(now.getTime() + plan.duration * 24 * 60 * 60 * 1000);
+    const durationDays = selectedBillingCycle === 'annual' ? 365 : 30;
+    const endDate = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
     await prisma.subscription.create({
       data: {
         restaurantId: restaurant.id,
@@ -327,6 +369,7 @@ export const createCheckoutSession = async (req: Request, res: Response) => {
         status: 'PENDING',
         paymentId: payment.id,
         paymentStatus: 'unpaid',
+        billingCycle: selectedBillingCycle,
       },
     });
 
@@ -414,7 +457,9 @@ export const confirmCheckoutSession = async (req: Request, res: Response) => {
     if (existingActiveSub) {
       // Extend existing subscription instead of creating new one
       const newEndDate = new Date(existingActiveSub.endDate);
-      newEndDate.setDate(newEndDate.getDate() + subscriptionRow.plan.duration);
+      newEndDate.setDate(
+        newEndDate.getDate() + (subscriptionRow.billingCycle === 'annual' ? 365 : 30),
+      );
 
       await prisma.subscription.update({
         where: { id: existingActiveSub.id },
@@ -422,6 +467,7 @@ export const confirmCheckoutSession = async (req: Request, res: Response) => {
           endDate: newEndDate,
           status: 'ACTIVE',
           paymentStatus: 'paid',
+          billingCycle: subscriptionRow.billingCycle,
         },
       });
 
@@ -688,9 +734,13 @@ export const confirmPayPalCheckout = async (req: Request, res: Response) => {
     });
     if (!subscriptionRow) return errorResponse(res, 'Subscription not found', 404);
 
-    const plan = subscriptionRow.plan;
     const now = new Date();
-    const endDate = new Date(now.getTime() + plan.duration * 24 * 60 * 60 * 1000);
+    const durationDays = subscriptionRow.billingCycle === 'annual' ? 365 : 30;
+    const endDate = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
+    const invoiceAmount =
+      subscriptionRow.billingCycle === 'annual'
+        ? (subscriptionRow.plan.annualPrice ?? subscriptionRow.plan.price * 12)
+        : (subscriptionRow.plan.monthlyPrice ?? subscriptionRow.plan.price);
 
     await prisma.$transaction([
       prisma.payment.update({
@@ -714,7 +764,7 @@ export const confirmPayPalCheckout = async (req: Request, res: Response) => {
         where: { stripeInvoiceId: `paypal_${payment.id}` },
         update: {
           status: 'PAID',
-          amountPaid: plan.price,
+          amountPaid: invoiceAmount,
           paymentMethod: 'PayPal',
           periodStart: now,
           periodEnd: endDate,
@@ -724,9 +774,9 @@ export const confirmPayPalCheckout = async (req: Request, res: Response) => {
           subscriptionId: subscriptionRow.id,
           paymentId: payment.id,
           stripeInvoiceId: `paypal_${payment.id}`,
-          amountDue: plan.price,
-          amountPaid: plan.price,
-          currency: plan.currency || 'EUR',
+          amountDue: invoiceAmount,
+          amountPaid: invoiceAmount,
+          currency: subscriptionRow.plan.currency || 'EUR',
           status: 'PAID',
           paymentMethod: 'PayPal',
           periodStart: now,
@@ -828,7 +878,9 @@ export const stripeWebhook = async (req: Request, res: Response) => {
         if (existingActiveSub) {
           // Extend existing subscription instead of creating new one
           const newEndDate = new Date(existingActiveSub.endDate);
-          newEndDate.setDate(newEndDate.getDate() + subscriptionRow.plan.duration);
+          newEndDate.setDate(
+            newEndDate.getDate() + (subscriptionRow.billingCycle === 'annual' ? 365 : 30),
+          );
 
           await prisma.subscription.update({
             where: { id: existingActiveSub.id },
@@ -836,6 +888,7 @@ export const stripeWebhook = async (req: Request, res: Response) => {
               endDate: newEndDate,
               status: 'ACTIVE',
               paymentStatus: 'paid',
+              billingCycle: subscriptionRow.billingCycle,
             },
           });
 

@@ -130,13 +130,18 @@ model Plan {
   title           String
   description     String?
   price           Float
+  monthlyPrice    Float?
+  annualPrice     Float?
   duration        Int
   isActive        Boolean        @default(true)
+  displayOrder    Int            @default(0)
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @default(now()) @updatedAt
   currency        String?
   stripeProductId String?
   stripePriceId   String?
+  stripeMonthlyPriceId String?
+  stripeAnnualPriceId  String?
   subscriberCount Int            @default(0)
   subscriptions   Subscription[]
   permissions     Permission[]
@@ -164,6 +169,7 @@ model Subscription {
   stripeCustomerId         String?
   stripeStatus             String?
   stripePriceObject        Json?
+  billingCycle             String?
   payment                  Payment?           @relation(fields: [paymentId], references: [id])
   invoices                 Invoice[]
   reminderSentAt30Days     DateTime?

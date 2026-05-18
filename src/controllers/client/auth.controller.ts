@@ -322,9 +322,9 @@ export const registerRestaurant = async (req: Request, res: Response) => {
         },
       });
 
-      // create subscription in the free plan (one-time only)
+      // The free trial is a system-managed onboarding subscription.
       const endDate = new Date();
-      endDate.setDate(endDate.getDate() + freePlan.duration);
+      endDate.setDate(endDate.getDate() + 7);
 
       const subscription = await prisma.subscription.create({
         data: {
