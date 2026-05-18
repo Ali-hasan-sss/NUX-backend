@@ -39,6 +39,17 @@ enum PermissionType {
 }
 const prisma = new PrismaClient();
 
+function isMissingStripeResource(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+
+  const stripeError = error as { code?: string; message?: string; statusCode?: number };
+  return (
+    stripeError.code === 'resource_missing' ||
+    stripeError.statusCode === 404 ||
+    stripeError.message?.toLowerCase().includes('no such') === true
+  );
+}
+
 /**
  * Create Stripe product and price for a plan
  */
@@ -96,7 +107,7 @@ const createStripeProductAndPrice = async (
  * Update Stripe product and create new price if needed
  */
 const updateStripeProductAndPrice = async (
-  productId: string,
+  productId: string | null,
   title: string,
   description: string | null,
   price: number,
@@ -112,15 +123,27 @@ const updateStripeProductAndPrice = async (
       };
     }
 
+    if (!productId) {
+      return createStripeProductAndPrice(title, description, price, currency, duration);
+    }
+
     // Update existing Stripe product
-    await stripe.products.update(productId, {
-      name: title,
-      ...(description && { description }),
-      metadata: {
-        duration: duration.toString(),
-        type: 'subscription_plan',
-      },
-    });
+    try {
+      await stripe.products.update(productId, {
+        name: title,
+        ...(description && { description }),
+        metadata: {
+          duration: duration.toString(),
+          type: 'subscription_plan',
+        },
+      });
+    } catch (error) {
+      if (!isMissingStripeResource(error)) throw error;
+
+      // Existing plans may contain test-mode Stripe IDs. When running with live keys,
+      // recreate the product/price and replace those stale IDs instead of blocking edits.
+      return createStripeProductAndPrice(title, description, price, currency, duration);
+    }
 
     // Create new price (Stripe prices are immutable, so we create a new one)
     const stripePrice = await stripe.prices.create({
@@ -145,6 +168,17 @@ const updateStripeProductAndPrice = async (
     throw new Error('Failed to update Stripe product and price');
   }
 };
+
+async function archiveStripeProduct(productId: string | null): Promise<void> {
+  if (!productId) return;
+
+  try {
+    await stripe.products.update(productId, { active: false });
+  } catch (error) {
+    if (isMissingStripeResource(error)) return;
+    throw error;
+  }
+}
 
 /**
  * @swagger
@@ -393,26 +427,14 @@ export const updatePlan = async (req: Request, res: Response) => {
 
     // Only update Stripe if the plan is not free (price > 0)
     if (needsStripeUpdate && finalPrice > 0) {
-      if (plan.stripeProductId) {
-        // Update existing Stripe product and create new price
-        stripeData = await updateStripeProductAndPrice(
-          plan.stripeProductId,
-          finalTitle,
-          finalDescription,
-          finalPrice,
-          finalCurrency,
-          finalDuration,
-        );
-      } else {
-        // Create new Stripe product and price if none exists
-        stripeData = await createStripeProductAndPrice(
-          finalTitle,
-          finalDescription,
-          finalPrice,
-          finalCurrency,
-          finalDuration,
-        );
-      }
+      stripeData = await updateStripeProductAndPrice(
+        plan.stripeProductId,
+        finalTitle,
+        finalDescription,
+        finalPrice,
+        finalCurrency,
+        finalDuration,
+      );
     } else if (needsStripeUpdate && finalPrice === 0) {
       // For free plans, clear Stripe data if it exists
       stripeData = {
@@ -494,10 +516,42 @@ export const deletePlan = async (req: Request, res: Response) => {
     const plan = await prisma.plan.findUnique({ where: { id: Number(id) } });
     if (!plan) return errorResponse(res, 'Plan not found', 404);
 
-    await prisma.plan.delete({ where: { id: Number(id) } });
+    await archiveStripeProduct(plan.stripeProductId);
+
+    const subscriptionsCount = await prisma.subscription.count({
+      where: { planId: Number(id) },
+    });
+
+    if (subscriptionsCount > 0) {
+      const deactivated = await prisma.plan.update({
+        where: { id: Number(id) },
+        data: {
+          isActive: false,
+          stripeProductId: null,
+          stripePriceId: null,
+        },
+        include: { permissions: true },
+      });
+
+      return successResponse(
+        res,
+        'Plan has subscription history, so it was deactivated instead of deleted',
+        deactivated,
+      );
+    }
+
+    await prisma.$transaction([
+      prisma.permission.deleteMany({ where: { planId: Number(id) } }),
+      prisma.plan.delete({ where: { id: Number(id) } }),
+    ]);
+
     return successResponse(res, 'Plan deleted successfully');
   } catch (error) {
     console.error(error);
-    return errorResponse(res, 'Internal server error', 500);
+    return errorResponse(
+      res,
+      error instanceof Error ? error.message : 'Internal server error',
+      500,
+    );
   }
 };

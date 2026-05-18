@@ -24,6 +24,109 @@ function getStripe() {
 }
 const stripe = getStripe();
 
+function isMissingStripeResource(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+
+  const stripeError = error as { code?: string; message?: string; statusCode?: number };
+  return (
+    stripeError.code === 'resource_missing' ||
+    stripeError.statusCode === 404 ||
+    stripeError.message?.toLowerCase().includes('no such') === true
+  );
+}
+
+async function createStripeProductAndPriceForPlan(plan: {
+  id: number;
+  title: string;
+  description: string | null;
+  price: number;
+  currency: string | null;
+  duration: number;
+}) {
+  const product = await stripe.products.create({
+    name: plan.title,
+    ...(plan.description && { description: plan.description }),
+    metadata: {
+      planId: String(plan.id),
+      duration: String(plan.duration),
+      type: 'subscription_plan',
+    },
+  });
+
+  const price = await stripe.prices.create({
+    product: product.id,
+    unit_amount: Math.round(plan.price * 100),
+    currency: (plan.currency || 'EUR').toLowerCase(),
+    recurring: {
+      interval: 'month',
+      interval_count: Math.max(1, Math.ceil(plan.duration / 30)),
+    },
+    metadata: {
+      planId: String(plan.id),
+      plan_duration_days: String(plan.duration),
+    },
+  });
+
+  await prisma.plan.update({
+    where: { id: plan.id },
+    data: {
+      stripeProductId: product.id,
+      stripePriceId: price.id,
+    },
+  });
+
+  return price.id;
+}
+
+async function ensureStripePriceForPlan(plan: {
+  id: number;
+  title: string;
+  description: string | null;
+  price: number;
+  currency: string | null;
+  duration: number;
+  stripePriceId: string | null;
+}) {
+  if (!plan.stripePriceId) {
+    return createStripeProductAndPriceForPlan(plan);
+  }
+
+  try {
+    await stripe.prices.retrieve(plan.stripePriceId);
+    return plan.stripePriceId;
+  } catch (error) {
+    if (!isMissingStripeResource(error)) throw error;
+
+    // Seeded/test-mode plans can point to prices that do not exist in live mode.
+    return createStripeProductAndPriceForPlan(plan);
+  }
+}
+
+async function ensureStripeCustomerForRestaurant(restaurant: {
+  id: string;
+  stripeCustomerId: string | null;
+}) {
+  if (restaurant.stripeCustomerId) {
+    try {
+      await stripe.customers.retrieve(restaurant.stripeCustomerId);
+      return restaurant.stripeCustomerId;
+    } catch (error) {
+      if (!isMissingStripeResource(error)) throw error;
+    }
+  }
+
+  const customer = await stripe.customers.create({
+    metadata: { restaurantId: restaurant.id },
+  });
+
+  await prisma.restaurant.update({
+    where: { id: restaurant.id },
+    data: { stripeCustomerId: customer.id },
+  });
+
+  return customer.id;
+}
+
 /**
  * @swagger
  * /restaurants/subscription/checkout:
@@ -180,22 +283,13 @@ export const createCheckoutSession = async (req: Request, res: Response) => {
     }
 
     // --- Stripe flow ---
-    if (!plan.stripePriceId)
-      return errorResponse(res, 'Plan is not configured for Stripe subscriptions', 400);
-
-    let stripeCustomerId = restaurant.stripeCustomerId || undefined;
-    if (!stripeCustomerId) {
-      const customer = await stripe.customers.create({
-        metadata: { restaurantId: restaurant.id },
-      });
-      stripeCustomerId = customer.id;
-      await prisma.restaurant.update({ where: { id: restaurant.id }, data: { stripeCustomerId } });
-    }
+    const stripePriceId = await ensureStripePriceForPlan(plan);
+    const stripeCustomerId = await ensureStripeCustomerForRestaurant(restaurant);
 
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
       customer: stripeCustomerId,
-      line_items: [{ price: plan.stripePriceId, quantity: 1 }],
+      line_items: [{ price: stripePriceId, quantity: 1 }],
       success_url:
         successUrl ||
         `${appBase}/dashboard/subscription?status=success&session_id={CHECKOUT_SESSION_ID}`,
