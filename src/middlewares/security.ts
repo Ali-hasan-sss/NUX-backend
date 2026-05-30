@@ -22,7 +22,14 @@ export const corsOptions = {
   origin: true, // Allow all origins
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-Requested-With',
+    'Accept',
+    'X-Client-Channel',
+    'X-Mobile-Api-Key',
+  ],
 };
 
 export const securityMiddleware = (app: any) => {

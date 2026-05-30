@@ -9,6 +9,8 @@ import {
   regenerateRestaurantQRCodes,
   getFloorPlan,
   updateFloorPlan,
+  getMenuBanner,
+  updateMenuBanner,
 } from '../../controllers/restaurant/restaurant.info.controller';
 import {
   getRestaurantWalletBalance,
@@ -98,6 +100,26 @@ router.put(
   body('floorPlan').optional().isObject().withMessage('floorPlan must be an object'),
   validateRequest,
   updateFloorPlan,
+);
+
+router.get(
+  '/menu-banner',
+  authenticateUser,
+  verifyRestaurantOwnership,
+  validateRequest,
+  getMenuBanner,
+);
+router.put(
+  '/menu-banner',
+  authenticateUser,
+  verifyRestaurantOwnership,
+  body('message')
+    .optional({ nullable: true })
+    .isString()
+    .isLength({ max: 500 })
+    .withMessage('Message must be at most 500 characters'),
+  validateRequest,
+  updateMenuBanner,
 );
 
 /** Ledger-based EUR wallet balance for this restaurant (credits from customer wallet payments) */

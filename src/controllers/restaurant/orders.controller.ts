@@ -354,3 +354,99 @@ export const updateOrderStatus = async (req: Request, res: Response) => {
     });
   }
 };
+
+/**
+ * @swagger
+ * /restaurants/orders/{orderId}:
+ *   delete:
+ *     summary: Delete an order
+ *     tags: [Restaurant Orders]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: orderId
+ *         schema:
+ *           type: integer
+ *         required: true
+ *         description: Order ID
+ *     responses:
+ *       200:
+ *         description: Order deleted successfully
+ *       404:
+ *         description: Order not found
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: Server error
+ */
+export const deleteOrder = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user?.id;
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized',
+      });
+    }
+
+    const { orderId } = req.params;
+    if (!orderId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Order ID is required',
+      });
+    }
+
+    const orderIdNum = parseInt(orderId);
+    if (isNaN(orderIdNum)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid order ID',
+      });
+    }
+
+    const restaurant = await prisma.restaurant.findUnique({
+      where: { userId },
+    });
+
+    if (!restaurant) {
+      return res.status(404).json({
+        success: false,
+        message: 'Restaurant not found',
+      });
+    }
+
+    const order = await prisma.order.findFirst({
+      where: {
+        id: orderIdNum,
+        restaurantId: restaurant.id,
+      },
+    });
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found',
+      });
+    }
+
+    await prisma.order.delete({
+      where: { id: orderIdNum },
+    });
+
+    emitToRestaurant(restaurant.id, 'order:deleted', { id: orderIdNum });
+
+    res.json({
+      success: true,
+      message: 'Order deleted successfully',
+      data: { id: orderIdNum },
+    });
+  } catch (err) {
+    console.error('Error deleting order:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+    });
+  }
+};

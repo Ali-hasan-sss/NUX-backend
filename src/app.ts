@@ -11,6 +11,7 @@ import {
   generalRateLimiter,
   xssSanitizerMiddleware,
 } from './middlewares/security';
+import { mobileClientMiddleware } from './middlewares/mobileClient';
 import swaggerRoutes from './routes/swagger.routes';
 import { checkAndUpdateSubscriptions, startSubscriptionChecker } from './jobs/subscriptionChecker';
 import {
@@ -77,6 +78,9 @@ app.use('/uploads', (req, res, next) => {
   next();
 });
 app.use('/uploads', express.static(uploadsDir));
+
+// Mobile app identification (X-Client-Channel / optional API key)
+app.use('/api', mobileClientMiddleware);
 
 // All API routes
 app.use('/api', routes);

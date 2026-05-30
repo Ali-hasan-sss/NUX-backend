@@ -1,6 +1,7 @@
 // src/controllers/menuCustomer.controller.ts
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
+import { getMenuBannerMessage } from '../../utils/floorPlanMenuBanner';
 
 const prisma = new PrismaClient();
 
@@ -34,7 +35,7 @@ export const getCategoriesByQRCode = async (req: Request, res: Response) => {
 
     const restaurant = await prisma.restaurant.findUnique({
       where: { id: qrCode }, // id هو String
-      select: { id: true, name: true, logo: true, currency: true },
+      select: { id: true, name: true, logo: true, currency: true, floorPlan: true },
     });
 
     if (!restaurant)
@@ -45,11 +46,13 @@ export const getCategoriesByQRCode = async (req: Request, res: Response) => {
     });
 
     const currency = restaurant.currency ?? 'EUR';
+    const menuBanner = getMenuBannerMessage(restaurant.floorPlan);
     res.json({
       success: true,
       data: categories,
       restaurant: { name: restaurant.name ?? null, logo: restaurant.logo ?? null },
       currency,
+      menuBanner,
     });
   } catch (err) {
     console.error(err);

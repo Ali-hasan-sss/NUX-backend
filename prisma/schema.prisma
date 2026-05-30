@@ -831,3 +831,19 @@ model AuditLog {
   @@index([action])
   @@index([createdAt])
 }
+
+enum LegalDocumentType {
+  PRIVACY_POLICY
+  TERMS_OF_USE
+}
+
+/// Admin-managed legal pages (HTML), per locale (en, ar, de).
+model LegalDocument {
+  type      LegalDocumentType
+  locale    String
+  content   String            @default("") @db.Text
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  @@id([type, locale])
+}

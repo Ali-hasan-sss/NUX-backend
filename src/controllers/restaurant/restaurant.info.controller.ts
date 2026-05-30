@@ -2,6 +2,11 @@ import { PrismaClient } from '@prisma/client';
 import { Request, Response } from 'express';
 import { errorResponse, successResponse } from '../../utils/response';
 import { randomUUID } from 'crypto';
+import {
+  getMenuBannerMessage,
+  mergeFloorPlanWithMenuBanner,
+  parseFloorPlan,
+} from '../../utils/floorPlanMenuBanner';
 import { getRestaurantPermissions } from '../../utils/permissions';
 
 const prisma = new PrismaClient();
@@ -277,7 +282,7 @@ export const getFloorPlan = async (req: Request, res: Response) => {
       return errorResponse(res, 'Restaurant not found', 404);
     }
     return successResponse(res, 'Floor plan fetched', {
-      floorPlan: restaurant.floorPlan ?? { walls: [], elements: [] },
+      floorPlan: parseFloorPlan(restaurant.floorPlan),
     });
   } catch (error) {
     console.error(error);
@@ -317,15 +322,69 @@ export const updateFloorPlan = async (req: Request, res: Response) => {
     if (!restaurant) {
       return errorResponse(res, 'Restaurant not found', 404);
     }
+    const existingBanner = getMenuBannerMessage(restaurant.floorPlan);
     const data =
       floorPlan != null && typeof floorPlan === 'object'
-        ? { walls: Array.isArray(floorPlan.walls) ? floorPlan.walls : [], elements: Array.isArray(floorPlan.elements) ? floorPlan.elements : [] }
-        : { walls: [], elements: [] };
+        ? mergeFloorPlanWithMenuBanner(
+            {
+              walls: Array.isArray(floorPlan.walls) ? floorPlan.walls : [],
+              elements: Array.isArray(floorPlan.elements) ? floorPlan.elements : [],
+            },
+            existingBanner
+          )
+        : mergeFloorPlanWithMenuBanner({ walls: [], elements: [] }, existingBanner);
     await prisma.restaurant.update({
       where: { id: restaurant.id },
       data: { floorPlan: data as any },
     });
     return successResponse(res, 'Floor plan updated', { floorPlan: data });
+  } catch (error) {
+    console.error(error);
+    return errorResponse(res, 'Internal server error', 500);
+  }
+};
+
+/** GET menu banner message (stored in floorPlan JSON) */
+export const getMenuBanner = async (req: Request, res: Response) => {
+  try {
+    const restaurant = await prisma.restaurant.findUnique({
+      where: { userId: req.user!.id },
+      select: { floorPlan: true },
+    });
+    if (!restaurant) {
+      return errorResponse(res, 'Restaurant not found', 404);
+    }
+    return successResponse(res, 'Menu banner fetched', {
+      message: getMenuBannerMessage(restaurant.floorPlan),
+    });
+  } catch (error) {
+    console.error(error);
+    return errorResponse(res, 'Internal server error', 500);
+  }
+};
+
+/** PUT menu banner message */
+export const updateMenuBanner = async (req: Request, res: Response) => {
+  try {
+    const { message } = req.body as { message?: string | null };
+    const restaurant = await prisma.restaurant.findUnique({
+      where: { userId: req.user!.id },
+      select: { id: true, floorPlan: true },
+    });
+    if (!restaurant) {
+      return errorResponse(res, 'Restaurant not found', 404);
+    }
+    const next =
+      typeof message === 'string' || message === null
+        ? mergeFloorPlanWithMenuBanner(restaurant.floorPlan, message)
+        : mergeFloorPlanWithMenuBanner(restaurant.floorPlan, null);
+    await prisma.restaurant.update({
+      where: { id: restaurant.id },
+      data: { floorPlan: next as any },
+    });
+    return successResponse(res, 'Menu banner updated', {
+      message: getMenuBannerMessage(next),
+    });
   } catch (error) {
     console.error(error);
     return errorResponse(res, 'Internal server error', 500);

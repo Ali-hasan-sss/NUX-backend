@@ -36,12 +36,16 @@ import contactRoutes from './common/contact.routes';
 import walletRoutes from './client/wallet.routes';
 import companyRoutes from './client/company.routes';
 import adminWalletRoutes from './admin/admin.wallet.routes';
+import adminLegalRoutes from './admin/admin.legal.routes';
+import publicLegalRoutes from './public/legal.public.routes';
 
 const router = Router();
 
 router.use('/wallet', walletRoutes);
 router.use('/client/wallet', walletRoutes);
 router.use('/admin/wallet', adminWalletRoutes);
+router.use('/admin/legal', adminLegalRoutes);
+router.use('/public/legal', publicLegalRoutes);
 router.use('/auth', authRoutes);
 router.use('/admin/users', usersRoutes);
 router.use('/admin/subadmins', subadminsRoutes);

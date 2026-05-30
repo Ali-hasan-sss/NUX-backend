@@ -4,6 +4,7 @@ import {
   getOrders,
   getOrderById,
   updateOrderStatus,
+  deleteOrder,
 } from '../../controllers/restaurant/orders.controller';
 import { authenticateUser } from '../../middlewares/Auth';
 import { validateRequest } from '../../middlewares/security';
@@ -48,6 +49,14 @@ router.put(
   ],
   validateRequest,
   updateOrderStatus
+);
+
+// DELETE order
+router.delete(
+  '/:orderId',
+  [param('orderId').isInt().withMessage('Order ID must be an integer')],
+  validateRequest,
+  deleteOrder
 );
 
 export default router;
