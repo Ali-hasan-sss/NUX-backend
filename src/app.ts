@@ -24,9 +24,17 @@ dotenv.config();
 
 const app = express();
 
-// Set trust proxy to work with nginx/reverse proxy
-// Use number of trusted proxies (1 = only trust first proxy)
-app.set('trust proxy', ['loopback', 'linklocal', 'uniquelocal']);
+// Trust reverse proxy (nginx) so req.ip / X-Forwarded-For reflect the real client.
+// TRUST_PROXY=1 (default) = one hop; set TRUST_PROXY=false for local dev without proxy.
+const trustProxyEnv = process.env.TRUST_PROXY?.trim();
+if (trustProxyEnv === 'false' || trustProxyEnv === '0') {
+  app.set('trust proxy', false);
+} else if (trustProxyEnv) {
+  const hops = trustProxyEnv === 'true' ? 1 : Number.parseInt(trustProxyEnv, 10);
+  app.set('trust proxy', Number.isFinite(hops) && hops > 0 ? hops : 1);
+} else {
+  app.set('trust proxy', 1);
+}
 
 // Apply rate limiter immediately after trust proxy
 app.use(generalRateLimiter);

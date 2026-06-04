@@ -7,6 +7,7 @@ import cookieParser from 'cookie-parser';
 import { ValidationError, validationResult } from 'express-validator';
 import express from 'express';
 import xss from 'xss';
+import { getRateLimitKey } from '../utils/rateLimitKey';
 /**
  * Exported middlewares:
  * - securityMiddleware(app)         -> mounts helmet, cors, body sanitizers, cookieParser
@@ -29,6 +30,7 @@ export const corsOptions = {
     'Accept',
     'X-Client-Channel',
     'X-Mobile-Api-Key',
+    'X-Device-Id',
   ],
 };
 
@@ -56,58 +58,40 @@ export const securityMiddleware = (app: any) => {
   );
 };
 
-function getClientIp(req: Request): string {
-  const forwarded = req.headers['x-forwarded-for'];
+const generalMax = Number(process.env.RATE_LIMIT_GENERAL_MAX) || 400;
+const loginMax = Number(process.env.RATE_LIMIT_LOGIN_MAX) || 15;
 
-  let ip: string | undefined;
-
-  if (typeof forwarded === 'string') {
-    ip = forwarded.split(',')[0]?.trim();
-  } else if (Array.isArray(forwarded)) {
-    ip = forwarded[0];
-  } else {
-    ip = req.socket?.remoteAddress;
-  }
-
-  if (!ip) ip = req.ip ?? 'unknown';
-
-  return ip.replace('::ffff:', '') || 'unknown';
-}
-
-// General global rate limiter (apply early)
+// General global rate limiter (apply early) — per IP + device (X-Device-Id)
 export const generalRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 200,
+  max: generalMax,
   standardHeaders: true,
   legacyHeaders: false,
   validate: false,
-  keyGenerator: (req) => getClientIp(req),
+  keyGenerator: (req) => getRateLimitKey(req),
   skip: (req) => req.path === '/api/health',
   message: { success: false, message: 'Too many requests, try again later.' },
 });
 
-// Login-specific limiter to block brute force
+// Login-specific limiter — per device on shared networks, not whole IP
 export const loginRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 5,
+  max: loginMax,
   standardHeaders: true,
   legacyHeaders: false,
   validate: false,
-  keyGenerator: (req) => getClientIp(req),
+  keyGenerator: (req) => getRateLimitKey(req),
   message: { success: false, message: 'Too many login attempts. Try again later.' },
 });
 
-/** After authenticateUser; limits wallet mutations per user + IP */
+/** After authenticateUser; limits wallet mutations per user + device */
 export const walletMutationRateLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 30,
   standardHeaders: true,
   legacyHeaders: false,
   validate: false,
-  keyGenerator: (req) => {
-    const uid = (req as any).user?.id ?? 'anon';
-    return `${getClientIp(req)}:${uid}`;
-  },
+  keyGenerator: (req) => getRateLimitKey(req, { useUserId: true }),
   message: { success: false, message: 'Too many wallet operations. Try again later.' },
 });
 
@@ -117,7 +101,7 @@ export const walletAdminRateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   validate: false,
-  keyGenerator: (req) => getClientIp(req),
+  keyGenerator: (req) => getRateLimitKey(req),
   message: { success: false, message: 'Too many requests.' },
 });
 
