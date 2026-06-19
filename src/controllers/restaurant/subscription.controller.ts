@@ -10,6 +10,7 @@ import {
 } from '../../lib/paypal';
 import { getStripeClient } from '../../lib/stripeClient';
 import { walletService } from '../../wallet/services/wallet.service';
+import { finalizeSubscriptionActivation } from '../../utils/subscription';
 
 /**
  * @swagger
@@ -673,6 +674,11 @@ export const confirmCheckoutSession = async (req: Request, res: Response) => {
       }),
     ]);
 
+    await finalizeSubscriptionActivation(
+      subscriptionRow.restaurantId,
+      subscriptionRow.id,
+    );
+
     return successResponse(res, 'Subscription activated', { subscriptionId: stripeSubscriptionId });
   } catch (err: any) {
     const message = err?.message || 'Stripe confirm error';
@@ -784,6 +790,11 @@ export const confirmPayPalCheckout = async (req: Request, res: Response) => {
         },
       }),
     ]);
+
+    await finalizeSubscriptionActivation(
+      subscriptionRow.restaurantId,
+      subscriptionRow.id,
+    );
 
     return successResponse(res, 'Subscription activated', { subscriptionId: orderId });
   } catch (err: any) {
@@ -1010,6 +1021,10 @@ export const stripeWebhook = async (req: Request, res: Response) => {
             },
           }),
         ]);
+        await finalizeSubscriptionActivation(
+          subscriptionRow.restaurantId,
+          subscriptionRow.id,
+        );
         break;
       }
       case 'invoice.paid': {

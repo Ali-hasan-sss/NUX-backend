@@ -2,6 +2,8 @@
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { emitToRestaurant } from '../../services/socket.service';
+import { hasPermission, PermissionType } from '../../utils/permissions';
+import { getEffectiveActiveSubscription } from '../../utils/subscription';
 
 const prisma = new PrismaClient();
 
@@ -86,19 +88,8 @@ export const createOrder = async (req: Request, res: Response) => {
       });
     }
 
-    // Require restaurant to have an active plan that supports orders (MANAGE_ORDERS)
-    const activeSubscription = (await prisma.subscription.findFirst({
-      where: {
-        restaurantId: restaurantId,
-        status: 'ACTIVE',
-        endDate: { gte: new Date() },
-      },
-      orderBy: { endDate: 'desc' },
-      include: {
-        plan: { include: { permissions: true } },
-      },
-    })) as any;
-
+    // Require restaurant effective plan to support orders (MANAGE_ORDERS)
+    const activeSubscription = await getEffectiveActiveSubscription(restaurantId);
     if (!activeSubscription) {
       return res.status(403).json({
         success: false,
@@ -108,9 +99,7 @@ export const createOrder = async (req: Request, res: Response) => {
       });
     }
 
-    const hasManageOrders = (activeSubscription?.plan?.permissions ?? []).some(
-      (p: any) => String(p.type) === 'MANAGE_ORDERS',
-    );
+    const hasManageOrders = await hasPermission(restaurantId, PermissionType.MANAGE_ORDERS);
     if (!hasManageOrders) {
       return res.status(403).json({
         success: false,

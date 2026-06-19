@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { param, body } from 'express-validator';
 import {
   getTables,
@@ -9,20 +9,22 @@ import {
 import { authenticateUser } from '../../middlewares/Auth';
 import { validateRequest } from '../../middlewares/security';
 import { verifyRestaurantOwnership } from '../../middlewares/Authorization';
-import { canManageQRCodes } from '../../middlewares/permissions';
+import {
+  canManageQRCodes,
+  canManageOrders,
+  canManageOrdersOrQRCodes,
+} from '../../middlewares/permissions';
 
 const router = Router();
 
 router.use(authenticateUser);
 router.use(verifyRestaurantOwnership);
-router.use(canManageQRCodes);
 
-// GET all tables
-router.get('/', getTables);
+router.get('/', canManageOrdersOrQRCodes, getTables);
 
-// POST create tables (bulk creation)
 router.post(
   '/',
+  canManageQRCodes,
   [
     body('count').isInt({ min: 1, max: 1000 }).withMessage('Count must be between 1 and 1000'),
     body('name').optional().isString().withMessage('Name must be a string'),
@@ -31,9 +33,14 @@ router.post(
   createTables,
 );
 
-// PUT update table
 router.put(
   '/:tableId',
+  (req: Request, res: Response, next: NextFunction) => {
+    if (req.body?.isSessionOpen !== undefined) {
+      return canManageOrders(req, res, next);
+    }
+    return canManageQRCodes(req, res, next);
+  },
   [
     param('tableId').isInt().withMessage('Table ID must be an integer'),
     body('name').optional().isString().withMessage('Name must be a string'),
@@ -44,9 +51,9 @@ router.put(
   updateTable,
 );
 
-// DELETE table
 router.delete(
   '/:tableId',
+  canManageQRCodes,
   [param('tableId').isInt().withMessage('Table ID must be an integer')],
   validateRequest,
   deleteTable,

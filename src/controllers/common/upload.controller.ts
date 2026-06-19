@@ -59,11 +59,17 @@ function toRelativeUrl(relativePath: string): string {
  *               file:
  *                 type: string
  *                 format: binary
- *               folder, restaurantId, entityType, entityId:
+ *               folder:
+ *                 type: string
+ *               restaurantId:
+ *                 type: string
+ *               entityType:
+ *                 type: string
+ *               entityId:
  *                 type: string
  *     responses:
  *       200:
- *         description: Returns { url: "/uploads/...", ... }
+ *         description: "Upload success; returns url path such as /uploads/..."
  *       400:
  *         description: No file provided
  *       415:

@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client';
 import { Request, Response } from 'express';
 import { errorResponse, successResponse } from '../../utils/response';
 import { sendNotificationToUser } from '../../services/notification.service';
+import { finalizeSubscriptionActivation } from '../../utils/subscription';
 
 const prisma = new PrismaClient();
 
@@ -350,6 +351,8 @@ export const activateSubscription = async (req: Request, res: Response) => {
         isActive: true,
       },
     });
+
+    await finalizeSubscriptionActivation(restaurantId, subscription.id);
 
     return successResponse(res, 'Subscription activated/extended successfully', subscription);
   } catch (error) {

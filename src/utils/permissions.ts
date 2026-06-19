@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import { getEffectiveActiveSubscription } from './subscription';
 
 enum PermissionType {
   // Restaurant Management
@@ -32,6 +33,8 @@ enum PermissionType {
 
 const prisma = new PrismaClient();
 
+export { PermissionType };
+
 export interface RestaurantPermission {
   type: PermissionType;
   value: number | null;
@@ -44,22 +47,7 @@ export interface RestaurantPermission {
 export const getRestaurantPermissions = async (
   restaurantId: string,
 ): Promise<RestaurantPermission[]> => {
-  const activeSubscription = (await prisma.subscription.findFirst({
-    where: {
-      restaurantId,
-      status: 'ACTIVE',
-      endDate: {
-        gte: new Date(),
-      },
-    },
-    include: {
-      plan: {
-        include: {
-          permissions: true,
-        },
-      },
-    },
-  })) as any;
+  const activeSubscription = (await getEffectiveActiveSubscription(restaurantId)) as any;
 
   if (!activeSubscription) {
     return [];
@@ -80,7 +68,8 @@ export const hasPermission = async (
   permission: PermissionType,
 ): Promise<boolean> => {
   const permissions = await getRestaurantPermissions(restaurantId);
-  return permissions.some((p) => p.type === permission);
+  const permissionStr = String(permission);
+  return permissions.some((p) => String(p.type) === permissionStr);
 };
 
 /**

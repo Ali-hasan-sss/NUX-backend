@@ -24,6 +24,7 @@ import {
   cancelRestaurantWalletWithdrawal,
 } from '../../controllers/client/wallet.controller';
 import { verifyRestaurantOwnership } from '../../middlewares/Authorization';
+import { canManageQRCodes } from '../../middlewares/permissions';
 
 /** Accept full URL (http/https) or server path (/uploads/...) for logo */
 const logoValidator = body('logo')
@@ -76,11 +77,12 @@ router.put(
   updateRestaurantByOwner,
 );
 
-// Regenerate restaurant QR codes
+// Regenerate loyalty QR codes (drink/meal) — requires MANAGE_QR_CODES
 router.put(
   '/qr/regenerate',
   authenticateUser,
   verifyRestaurantOwnership,
+  canManageQRCodes,
   validateRequest,
   regenerateRestaurantQRCodes,
 );

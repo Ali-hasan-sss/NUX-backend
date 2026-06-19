@@ -97,7 +97,7 @@ export const listSubAdmins = async (req: Request, res: Response) => {
  *       - bearerAuth: []
  *     responses:
  *       200:
- *         description: { permissions: string[], role: 'ADMIN' | 'SUBADMIN' }
+ *         description: "Object with permissions array and role ADMIN or SUBADMIN"
  *       401:
  *         description: Unauthorized
  *       403:
