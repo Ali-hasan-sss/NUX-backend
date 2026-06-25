@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcrypt';
 import { v4 as uuidv4 } from 'uuid';
 import { generateAccessToken, generateRefreshToken } from '../src/utils/token';
+import { seedLegalDocuments } from './seed-legal';
 
 const prisma = new PrismaClient();
 
@@ -76,6 +77,8 @@ async function main() {
     });
     console.log('⚠️ Free plan already exists:', freePlan.title);
   }
+
+  await seedLegalDocuments(false);
 }
 
 main()

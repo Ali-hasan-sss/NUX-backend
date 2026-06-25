@@ -10,6 +10,8 @@
     "start": "node dist/index.js",
     "postinstall": "prisma generate",
     "seed": "ts-node prisma/seed.ts",
+    "seed:legal": "ts-node prisma/seed-legal.ts",
+    "seed:legal:force": "ts-node prisma/seed-legal.ts --force",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
