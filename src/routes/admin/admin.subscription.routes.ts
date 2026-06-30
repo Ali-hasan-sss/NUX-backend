@@ -7,6 +7,7 @@ import {
   activateSubscription,
   cancelSubscription,
   getAllSubscriptions,
+  listRefundablePayments,
   refundSubscriptionPayment,
 } from '../../controllers/admin/admin.subscriptions.controller';
 
@@ -51,12 +52,20 @@ router.post(
   activateSubscription,
 );
 
+router.get(
+  '/refundable/:id',
+  [param('id').isInt({ min: 1 }).withMessage('Subscription ID must be a positive integer')],
+  validateRequest,
+  listRefundablePayments,
+);
+
 router.post(
   '/refund/:id',
   [
     param('id').isInt({ min: 1 }).withMessage('Subscription ID must be a positive integer'),
     body('reason').optional().isString(),
     body('apologyMessage').optional().isString().isLength({ max: 2000 }),
+    body('stripeInvoiceId').optional().isString(),
     body('amount').optional().isFloat({ gt: 0 }),
   ],
   validateRequest,

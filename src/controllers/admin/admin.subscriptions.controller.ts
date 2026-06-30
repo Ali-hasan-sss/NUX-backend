@@ -5,9 +5,13 @@ import { sendNotificationToUser } from '../../services/notification.service';
 import { finalizeSubscriptionActivation } from '../../utils/subscription';
 import { sendSubscriptionRefundEmail } from '../../utils/email';
 import {
+  createStripeRefund,
+  listRefundableStripeInvoices,
+  pickRefundTarget,
+} from '../../utils/stripeRefund';
+import {
   cancelStripeSubscriptionImmediately,
 } from '../../utils/stripeSubscriptionSync';
-import { getStripeClient } from '../../lib/stripeClient';
 
 const prisma = new PrismaClient();
 
@@ -373,15 +377,55 @@ export const activateSubscription = async (req: Request, res: Response) => {
 };
 
 /**
+ * List Stripe-paid invoices available for refund (includes charges not recorded locally).
+ */
+export const listRefundablePayments = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const subscription = await prisma.subscription.findUnique({
+      where: { id: Number(id) },
+      include: {
+        restaurant: true,
+        invoices: { select: { stripeInvoiceId: true } },
+      },
+    });
+
+    if (!subscription) return errorResponse(res, 'Subscription not found', 404);
+
+    const knownLocalInvoiceIds = subscription.invoices
+      .map((i) => i.stripeInvoiceId)
+      .filter((x): x is string => Boolean(x));
+
+    const candidates = await listRefundableStripeInvoices({
+      stripeSubscriptionId: subscription.stripeSubscriptionId,
+      stripeCustomerId: subscription.restaurant.stripeCustomerId,
+      knownLocalInvoiceIds,
+    });
+
+    const suggested = pickRefundTarget(candidates, { preferUnrecorded: true });
+
+    return successResponse(res, 'Refundable payments retrieved', {
+      items: candidates,
+      suggestedStripeInvoiceId: suggested?.stripeInvoiceId ?? null,
+    });
+  } catch (error) {
+    console.error(error);
+    return errorResponse(res, 'Internal server error', 500);
+  }
+};
+
+/**
  * Refund the latest Stripe payment for a subscription (full or partial).
  */
 export const refundSubscriptionPayment = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { amount, reason, apologyMessage } = req.body as {
+    const { amount, reason, apologyMessage, stripeInvoiceId } = req.body as {
       amount?: number;
       reason?: string;
       apologyMessage?: string;
+      stripeInvoiceId?: string;
     };
 
     const subscription = await prisma.subscription.findUnique({
@@ -392,57 +436,73 @@ export const refundSubscriptionPayment = async (req: Request, res: Response) => 
         invoices: {
           where: { status: 'PAID' },
           orderBy: { createdAt: 'desc' },
-          take: 5,
+          take: 20,
         },
       },
     });
 
     if (!subscription) return errorResponse(res, 'Subscription not found', 404);
 
-    const stripeInvoice = subscription.invoices.find(
-      (inv) =>
-        inv.stripeInvoiceId &&
-        !inv.stripeInvoiceId.startsWith('manual_') &&
-        !inv.stripeInvoiceId.startsWith('paypal_'),
-    );
+    const knownLocalInvoiceIds = subscription.invoices
+      .map((i) => i.stripeInvoiceId)
+      .filter((x): x is string => Boolean(x));
 
-    if (!stripeInvoice?.stripeInvoiceId) {
-      return errorResponse(res, 'No refundable Stripe invoice found for this subscription', 400);
+    const candidates = await listRefundableStripeInvoices({
+      stripeSubscriptionId: subscription.stripeSubscriptionId,
+      stripeCustomerId: subscription.restaurant.stripeCustomerId,
+      knownLocalInvoiceIds,
+    });
+
+    const target = pickRefundTarget(candidates, {
+      ...(stripeInvoiceId?.trim() ? { stripeInvoiceId: stripeInvoiceId.trim() } : {}),
+      preferUnrecorded: true,
+    });
+
+    if (!target) {
+      return errorResponse(
+        res,
+        'No refundable Stripe payment found. The charge may already be refunded, or no paid Stripe invoice exists for this subscription.',
+        400,
+      );
     }
 
-    const stripe = getStripeClient();
-    const invoice = await stripe.invoices.retrieve(stripeInvoice.stripeInvoiceId);
-    const invAny = invoice as { payment_intent?: string | { id: string } | null };
-    const paymentIntentId =
-      typeof invAny.payment_intent === 'string'
-        ? invAny.payment_intent
-        : invAny.payment_intent?.id;
-
-    if (!paymentIntentId) {
-      return errorResponse(res, 'No payment intent linked to this invoice', 400);
-    }
-
-    const refundParams: {
-      payment_intent: string;
-      amount?: number;
-      reason: 'requested_by_customer';
-      metadata: Record<string, string>;
-    } = {
-      payment_intent: paymentIntentId,
-      reason: 'requested_by_customer',
+    const refund = await createStripeRefund({
+      ...(target.paymentIntentId ? { paymentIntentId: target.paymentIntentId } : {}),
+      ...(target.chargeId ? { chargeId: target.chargeId } : {}),
+      ...(amount != null && amount > 0 ? { amountCents: Math.round(amount * 100) } : {}),
       metadata: {
         subscriptionId: String(subscription.id),
         restaurantId: subscription.restaurantId,
+        stripeInvoiceId: target.stripeInvoiceId,
         adminRefund: 'true',
         reason: reason || 'Admin refund',
       },
-    };
+    });
 
-    if (amount != null && amount > 0) {
-      refundParams.amount = Math.round(amount * 100);
+    // Record Stripe-only invoice locally after refund (audit trail)
+    const existingLocal = subscription.invoices.find(
+      (i) => i.stripeInvoiceId === target.stripeInvoiceId,
+    );
+    if (!existingLocal) {
+      try {
+        await prisma.invoice.create({
+          data: {
+            restaurantId: subscription.restaurantId,
+            subscriptionId: subscription.id,
+            stripeInvoiceId: target.stripeInvoiceId,
+            amountDue: target.amountPaid,
+            amountPaid: target.amountPaid,
+            currency: target.currency,
+            status: 'PAID',
+            paymentMethod: 'stripe',
+            periodStart: new Date(),
+            periodEnd: new Date(),
+          },
+        });
+      } catch (invErr) {
+        console.warn('Could not record refunded Stripe invoice locally:', invErr);
+      }
     }
-
-    const refund = await stripe.refunds.create(refundParams);
 
     const refundedAmount = (refund.amount ?? 0) / 100;
     const currency = refund.currency?.toUpperCase() ?? 'EUR';
@@ -491,6 +551,8 @@ export const refundSubscriptionPayment = async (req: Request, res: Response) => 
       amount: refundedAmount,
       currency,
       status: refund.status,
+      stripeInvoiceId: target.stripeInvoiceId,
+      wasUnrecordedLocally: !target.recordedLocally,
       notificationSent: true,
       emailSent: Boolean(owner?.email),
       apologyIncluded: Boolean(apology),
