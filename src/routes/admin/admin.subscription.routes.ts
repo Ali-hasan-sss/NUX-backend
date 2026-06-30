@@ -7,6 +7,7 @@ import {
   activateSubscription,
   cancelSubscription,
   getAllSubscriptions,
+  refundSubscriptionPayment,
 } from '../../controllers/admin/admin.subscriptions.controller';
 
 const router = express.Router();
@@ -48,6 +49,18 @@ router.post(
   body('restaurantId').notEmpty().isUUID().withMessage('Cancellation reason is required'),
   validateRequest,
   activateSubscription,
+);
+
+router.post(
+  '/refund/:id',
+  [
+    param('id').isInt({ min: 1 }).withMessage('Subscription ID must be a positive integer'),
+    body('reason').optional().isString(),
+    body('apologyMessage').optional().isString().isLength({ max: 2000 }),
+    body('amount').optional().isFloat({ gt: 0 }),
+  ],
+  validateRequest,
+  refundSubscriptionPayment,
 );
 
 export default router;

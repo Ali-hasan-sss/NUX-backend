@@ -213,6 +213,18 @@ export interface SubscriptionReminderParams {
   daysLeft: number;
 }
 
+export interface SubscriptionRefundEmailParams {
+  to: string;
+  ownerName: string | null;
+  restaurantName: string;
+  planName: string;
+  amount: number;
+  currency: string;
+  refundId: string;
+  /** Optional admin apology — shown in the email body (English recommended). */
+  apologyMessage?: string;
+}
+
 /**
  * Send subscription renewal reminder email to restaurant owner (English).
  */
@@ -313,6 +325,71 @@ export const sendSubscriptionReminderEmail = async (params: SubscriptionReminder
     to,
     subject: `${title} - ${appName}`,
     text: `Your subscription for ${restaurantName} (${planName}) ends in ${daysLeft} days (${endDateStr}). Please renew to continue.`,
+    html,
+  });
+};
+
+/**
+ * Notify restaurant owner that a subscription payment was refunded (English).
+ */
+export const sendSubscriptionRefundEmail = async (params: SubscriptionRefundEmailParams) => {
+  const {
+    to,
+    ownerName,
+    restaurantName,
+    planName,
+    amount,
+    currency,
+    refundId,
+    apologyMessage,
+  } = params;
+  const transporter = getTransporter();
+  const appName = getAppName();
+
+  const esc = (s: string) =>
+    s
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+
+  const greeting = ownerName ? `Hello <strong>${esc(ownerName)}</strong>,` : 'Hello,';
+  const apologyBlock = apologyMessage?.trim()
+    ? `<p style="margin:0 0 16px; font-size:15px; line-height:1.6; color:${BRAND.textMuted};">${esc(
+        apologyMessage.trim(),
+      ).replace(/\n/g, '<br/>')}</p>`
+    : `<p style="margin:0 0 16px; font-size:15px; line-height:1.6; color:${BRAND.textMuted};">We apologize for any inconvenience caused. Our team has reviewed your account and processed a refund.</p>`;
+
+  const title = 'Payment refund confirmation';
+  const bodyHtml = `
+    <p style="margin:0 0 16px; font-size:15px; line-height:1.5; color:${BRAND.textMuted};">${greeting}</p>
+    ${apologyBlock}
+    <p style="margin:0 0 16px; font-size:15px; line-height:1.5; color:${BRAND.textMuted};">A refund has been issued for your <strong>${esc(
+      planName,
+    )}</strong> subscription at <strong>${esc(restaurantName)}</strong>.</p>
+    <table role="presentation" cellspacing="0" cellpadding="0" style="margin:0 0 20px; width:100%; border:1px solid ${BRAND.border}; border-radius:8px; overflow:hidden;">
+      <tr>
+        <td style="padding:12px 16px; font-size:14px; color:${BRAND.textMuted}; background:${BRAND.bgFooter};">Amount refunded</td>
+        <td style="padding:12px 16px; font-size:16px; font-weight:600; color:${BRAND.text}; text-align:right;"><strong>${amount.toFixed(2)} ${esc(currency)}</strong></td>
+      </tr>
+      <tr>
+        <td style="padding:12px 16px; font-size:14px; color:${BRAND.textMuted}; border-top:1px solid ${BRAND.border};">Reference</td>
+        <td style="padding:12px 16px; font-size:13px; color:${BRAND.textLight}; text-align:right; border-top:1px solid ${BRAND.border}; word-break:break-all;">${esc(refundId)}</td>
+      </tr>
+    </table>
+    <p style="margin:0 0 16px; font-size:14px; line-height:1.5; color:${BRAND.textMuted};">The refunded amount should appear on your card or bank statement within <strong>5–10 business days</strong>, depending on your payment provider.</p>
+    <p style="margin:0; font-size:13px; color:${BRAND.textLight};">If you have any questions, please reply to this email or contact our support team.</p>`;
+
+  const html = buildBrandedEmail(title, bodyHtml);
+  const plainApology =
+    apologyMessage?.trim() ||
+    'We apologize for any inconvenience caused. Our team has reviewed your account and processed a refund.';
+
+  await transporter.sendMail({
+    from: getFrom(),
+    to,
+    subject: `Refund confirmation — ${appName}`,
+    text: `${plainApology}\n\nRefund for ${restaurantName} (${planName}): ${amount.toFixed(2)} ${currency}\nReference: ${refundId}\n\nThe amount should appear within 5–10 business days.`,
     html,
   });
 };

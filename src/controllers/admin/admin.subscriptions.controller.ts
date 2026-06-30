@@ -3,6 +3,11 @@ import { Request, Response } from 'express';
 import { errorResponse, successResponse } from '../../utils/response';
 import { sendNotificationToUser } from '../../services/notification.service';
 import { finalizeSubscriptionActivation } from '../../utils/subscription';
+import { sendSubscriptionRefundEmail } from '../../utils/email';
+import {
+  cancelStripeSubscriptionImmediately,
+} from '../../utils/stripeSubscriptionSync';
+import { getStripeClient } from '../../lib/stripeClient';
 
 const prisma = new PrismaClient();
 
@@ -204,10 +209,16 @@ export const cancelSubscription = async (req: Request, res: Response) => {
       return errorResponse(res, 'Subscription cannot be cancelled', 400);
     }
 
+    if (subscription.stripeSubscriptionId) {
+      await cancelStripeSubscriptionImmediately(subscription.stripeSubscriptionId);
+    }
+
     const updatedSubscription = await prisma.subscription.update({
       where: { id: subscription.id },
       data: {
         status: 'CANCELLED',
+        autoRenew: false,
+        ...(subscription.stripeSubscriptionId ? { stripeStatus: 'canceled' } : {}),
       },
       include: {
         plan: true,
@@ -358,5 +369,135 @@ export const activateSubscription = async (req: Request, res: Response) => {
   } catch (error) {
     console.error(error);
     return errorResponse(res, 'Internal server error', 500);
+  }
+};
+
+/**
+ * Refund the latest Stripe payment for a subscription (full or partial).
+ */
+export const refundSubscriptionPayment = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { amount, reason, apologyMessage } = req.body as {
+      amount?: number;
+      reason?: string;
+      apologyMessage?: string;
+    };
+
+    const subscription = await prisma.subscription.findUnique({
+      where: { id: Number(id) },
+      include: {
+        plan: true,
+        restaurant: { include: { owner: true } },
+        invoices: {
+          where: { status: 'PAID' },
+          orderBy: { createdAt: 'desc' },
+          take: 5,
+        },
+      },
+    });
+
+    if (!subscription) return errorResponse(res, 'Subscription not found', 404);
+
+    const stripeInvoice = subscription.invoices.find(
+      (inv) =>
+        inv.stripeInvoiceId &&
+        !inv.stripeInvoiceId.startsWith('manual_') &&
+        !inv.stripeInvoiceId.startsWith('paypal_'),
+    );
+
+    if (!stripeInvoice?.stripeInvoiceId) {
+      return errorResponse(res, 'No refundable Stripe invoice found for this subscription', 400);
+    }
+
+    const stripe = getStripeClient();
+    const invoice = await stripe.invoices.retrieve(stripeInvoice.stripeInvoiceId);
+    const invAny = invoice as { payment_intent?: string | { id: string } | null };
+    const paymentIntentId =
+      typeof invAny.payment_intent === 'string'
+        ? invAny.payment_intent
+        : invAny.payment_intent?.id;
+
+    if (!paymentIntentId) {
+      return errorResponse(res, 'No payment intent linked to this invoice', 400);
+    }
+
+    const refundParams: {
+      payment_intent: string;
+      amount?: number;
+      reason: 'requested_by_customer';
+      metadata: Record<string, string>;
+    } = {
+      payment_intent: paymentIntentId,
+      reason: 'requested_by_customer',
+      metadata: {
+        subscriptionId: String(subscription.id),
+        restaurantId: subscription.restaurantId,
+        adminRefund: 'true',
+        reason: reason || 'Admin refund',
+      },
+    };
+
+    if (amount != null && amount > 0) {
+      refundParams.amount = Math.round(amount * 100);
+    }
+
+    const refund = await stripe.refunds.create(refundParams);
+
+    const refundedAmount = (refund.amount ?? 0) / 100;
+    const currency = refund.currency?.toUpperCase() ?? 'EUR';
+    const apology = apologyMessage?.trim();
+    const owner = subscription.restaurant.owner;
+    const ownerId = subscription.restaurant.userId;
+    const planTitle = subscription.plan?.title ?? 'subscription';
+    const restaurantName = subscription.restaurant.name;
+
+    const defaultApologyEn =
+      'We apologize for any inconvenience. A refund has been processed for your subscription.';
+    const notificationApology = apology || defaultApologyEn;
+
+    await sendNotificationToUser({
+      userId: ownerId,
+      title: 'Refund issued — NUX',
+      body: `${notificationApology}\n\nWe have refunded ${refundedAmount.toFixed(2)} ${currency} for your ${planTitle} plan (${restaurantName}). The amount will appear on your card within 5–10 business days.`,
+      type: 'SUBSCRIPTION_REFUND',
+      data: {
+        subscriptionId: String(subscription.id),
+        refundId: refund.id,
+        amount: String(refundedAmount),
+        currency,
+      },
+    });
+
+    if (owner?.email) {
+      try {
+        await sendSubscriptionRefundEmail({
+          to: owner.email,
+          ownerName: owner.fullName,
+          restaurantName,
+          planName: planTitle,
+          amount: refundedAmount,
+          currency,
+          refundId: refund.id,
+          ...(apology ? { apologyMessage: apology } : {}),
+        });
+      } catch (emailErr) {
+        console.error('Refund confirmation email failed:', emailErr);
+      }
+    }
+
+    return successResponse(res, 'Refund issued successfully', {
+      refundId: refund.id,
+      amount: refundedAmount,
+      currency,
+      status: refund.status,
+      notificationSent: true,
+      emailSent: Boolean(owner?.email),
+      apologyIncluded: Boolean(apology),
+    });
+  } catch (error) {
+    console.error(error);
+    const message = error instanceof Error ? error.message : 'Refund failed';
+    return errorResponse(res, message, 500);
   }
 };

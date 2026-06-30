@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { errorResponse, successResponse } from '../../utils/response';
 import { PrismaClient } from '@prisma/client';
 import Stripe from 'stripe';
+import { stripeStatementDescriptor } from '../../utils/stripeSubscriptionSync';
 
 // Initialize Stripe
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
@@ -88,6 +89,7 @@ const createStripeProductAndPrice = async (
     // Create Stripe product
     const product = await stripe.products.create({
       name: title,
+      statement_descriptor: stripeStatementDescriptor(),
       ...(description && { description }),
       metadata: {
         duration: duration.toString(),

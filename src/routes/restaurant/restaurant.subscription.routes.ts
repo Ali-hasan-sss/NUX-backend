@@ -5,6 +5,7 @@ import {
   createCheckoutSession,
   confirmCheckoutSession,
   confirmPayPalCheckout,
+  setSubscriptionAutoRenew,
 } from '../../controllers/restaurant/subscription.controller';
 import { body } from 'express-validator';
 
@@ -36,6 +37,14 @@ router.post(
   body('orderId').isString().notEmpty(),
   validateRequest,
   confirmPayPalCheckout,
+);
+
+router.put(
+  '/auto-renew',
+  authenticateUser,
+  body('enabled').isBoolean(),
+  validateRequest,
+  setSubscriptionAutoRenew,
 );
 
 // Webhook endpoint moved to app.ts to ensure raw body parsing
