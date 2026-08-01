@@ -14,25 +14,81 @@ export function stripeSubscriptionDescription(planTitle: string): string {
   return `NUX subscription — ${planTitle}`;
 }
 
+function toDateFromUnix(seconds?: number | null): Date | undefined {
+  if (!seconds || typeof seconds !== 'number') return undefined;
+  const d = new Date(seconds * 1000);
+  return isNaN(d.getTime()) ? undefined : d;
+}
+
+/**
+ * Stripe Basil+ removed top-level current_period_* from Subscription;
+ * periods live on subscription items. Keep reading legacy fields as fallback.
+ */
 export function extractStripePeriod(sub: StripeNS.Subscription): {
   stripeCurrentPeriodStart?: Date;
   stripeCurrentPeriodEnd?: Date;
 } {
-  const periodStart = (sub as { current_period_start?: number }).current_period_start;
-  const periodEnd = (sub as { current_period_end?: number }).current_period_end;
+  const legacy = sub as {
+    current_period_start?: number;
+    current_period_end?: number;
+  };
+
+  let periodStartSec: number | undefined = legacy.current_period_start;
+  let periodEndSec: number | undefined = legacy.current_period_end;
+
+  const items = sub.items?.data ?? [];
+  for (const item of items) {
+    const itemPeriod = item as {
+      current_period_start?: number;
+      current_period_end?: number;
+    };
+    if (
+      typeof itemPeriod.current_period_start === 'number' &&
+      (periodStartSec === undefined || itemPeriod.current_period_start < periodStartSec)
+    ) {
+      periodStartSec = itemPeriod.current_period_start;
+    }
+    // Earliest item end matches Stripe's mixed-interval subscription period
+    if (
+      typeof itemPeriod.current_period_end === 'number' &&
+      (periodEndSec === undefined || itemPeriod.current_period_end < periodEndSec)
+    ) {
+      periodEndSec = itemPeriod.current_period_end;
+    }
+  }
+
   const result: {
     stripeCurrentPeriodStart?: Date;
     stripeCurrentPeriodEnd?: Date;
   } = {};
 
-  if (periodStart && typeof periodStart === 'number') {
-    const d = new Date(periodStart * 1000);
-    if (!isNaN(d.getTime())) result.stripeCurrentPeriodStart = d;
-  }
-  if (periodEnd && typeof periodEnd === 'number') {
-    const d = new Date(periodEnd * 1000);
-    if (!isNaN(d.getTime())) result.stripeCurrentPeriodEnd = d;
-  }
+  const start = toDateFromUnix(periodStartSec);
+  const end = toDateFromUnix(periodEndSec);
+  if (start) result.stripeCurrentPeriodStart = start;
+  if (end) result.stripeCurrentPeriodEnd = end;
+  return result;
+}
+
+/** Fallback when subscription object has no period (use paid invoice line period). */
+export function extractPeriodFromInvoice(inv: StripeNS.Invoice): {
+  stripeCurrentPeriodStart?: Date;
+  stripeCurrentPeriodEnd?: Date;
+} {
+  const lines = inv.lines?.data ?? [];
+  const lineWithPeriod = lines.find((l) => l.period?.end) ?? lines[0];
+  const invAny = inv as { period_start?: number; period_end?: number };
+
+  const startSec = lineWithPeriod?.period?.start ?? invAny.period_start;
+  const endSec = lineWithPeriod?.period?.end ?? invAny.period_end;
+
+  const result: {
+    stripeCurrentPeriodStart?: Date;
+    stripeCurrentPeriodEnd?: Date;
+  } = {};
+  const start = toDateFromUnix(startSec);
+  const end = toDateFromUnix(endSec);
+  if (start) result.stripeCurrentPeriodStart = start;
+  if (end) result.stripeCurrentPeriodEnd = end;
   return result;
 }
 
@@ -92,30 +148,62 @@ function isStripeMissing(error: unknown): boolean {
   );
 }
 
-/** Cancel any active Stripe subscription for a restaurant before starting a new checkout. */
+/**
+ * Cancel Stripe subscriptions linked to local rows that are still billable remotely.
+ * Includes EXPIRED/CANCELLED so a wrongly-expired local row cannot keep billing in Stripe
+ * while the restaurant starts a new checkout.
+ */
 export async function cancelExistingStripeSubscriptionsForRestaurant(
   restaurantId: string,
   excludeSubscriptionId?: number,
 ): Promise<void> {
   const rows = await prisma.subscription.findMany({
-      where: {
-        restaurantId,
-        stripeSubscriptionId: { not: null },
-        status: { in: ['ACTIVE', 'PENDING'] },
-        ...(excludeSubscriptionId ? { id: { not: excludeSubscriptionId } } : {}),
-      },
-      select: { id: true, stripeSubscriptionId: true },
-    });
+    where: {
+      restaurantId,
+      stripeSubscriptionId: { not: null },
+      status: { in: ['ACTIVE', 'PENDING', 'EXPIRED', 'CANCELLED'] },
+      ...(excludeSubscriptionId ? { id: { not: excludeSubscriptionId } } : {}),
+    },
+    select: { id: true, stripeSubscriptionId: true },
+  });
 
-    for (const row of rows) {
-      if (row.stripeSubscriptionId) {
-        await cancelStripeSubscriptionImmediately(row.stripeSubscriptionId);
-      }
-      await prisma.subscription.update({
-        where: { id: row.id },
-        data: { autoRenew: false, stripeStatus: 'canceled' },
-      });
+  for (const row of rows) {
+    if (row.stripeSubscriptionId) {
+      await cancelStripeSubscriptionImmediately(row.stripeSubscriptionId);
     }
+    await prisma.subscription.update({
+      where: { id: row.id },
+      data: { autoRenew: false, stripeStatus: 'canceled' },
+    });
+  }
+}
+
+/** Stop Stripe billing for EXPIRED/CANCELLED local rows whose Stripe status is no longer active. */
+export async function cancelStaleStripeSubscriptionsForRestaurant(
+  restaurantId: string,
+): Promise<void> {
+  const rows = await prisma.subscription.findMany({
+    where: {
+      restaurantId,
+      stripeSubscriptionId: { not: null },
+      status: { in: ['EXPIRED', 'CANCELLED'] },
+      OR: [
+        { stripeStatus: null },
+        { stripeStatus: { notIn: ['active', 'trialing', 'past_due'] } },
+      ],
+    },
+    select: { id: true, stripeSubscriptionId: true },
+  });
+
+  for (const row of rows) {
+    if (row.stripeSubscriptionId) {
+      await cancelStripeSubscriptionImmediately(row.stripeSubscriptionId);
+    }
+    await prisma.subscription.update({
+      where: { id: row.id },
+      data: { autoRenew: false, stripeStatus: 'canceled' },
+    });
+  }
 }
 
 export function checkoutSubscriptionData(planTitle: string, metadata: Record<string, string>) {

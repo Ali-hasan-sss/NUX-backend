@@ -2,6 +2,10 @@ import { PrismaClient } from '@prisma/client';
 import cron from 'node-cron';
 import { sendNotificationToUser } from '../services/notification.service';
 import { sendSubscriptionReminderEmail } from '../utils/email';
+import {
+  retrieveStripeSubscription,
+  syncFieldsFromStripeSub,
+} from '../utils/stripeSubscriptionSync';
 
 export const prisma = new PrismaClient();
 
@@ -79,6 +83,46 @@ async function sendRemindersForSubscriptionsEndingIn(daysOffset: number) {
   return subs.length;
 }
 
+/** If Stripe still has an active paid period, heal local endDate instead of marking EXPIRED. */
+async function tryHealFromStripe(sub: {
+  id: number;
+  stripeSubscriptionId: string | null;
+}): Promise<boolean> {
+  if (!sub.stripeSubscriptionId) return false;
+  try {
+    const s = await retrieveStripeSubscription(sub.stripeSubscriptionId);
+    if (s.status !== 'active' && s.status !== 'trialing') return false;
+
+    const sync = syncFieldsFromStripeSub(s);
+    if (!sync.stripeCurrentPeriodEnd || sync.stripeCurrentPeriodEnd < new Date()) return false;
+
+    await prisma.subscription.update({
+      where: { id: sub.id },
+      data: {
+        status: 'ACTIVE',
+        paymentStatus: 'paid',
+        autoRenew: sync.autoRenew,
+        stripeStatus: sync.stripeStatus,
+        endDate: sync.stripeCurrentPeriodEnd,
+        stripeCurrentPeriodEnd: sync.stripeCurrentPeriodEnd,
+        ...(sync.stripeCurrentPeriodStart
+          ? {
+              stripeCurrentPeriodStart: sync.stripeCurrentPeriodStart,
+              startDate: sync.stripeCurrentPeriodStart,
+            }
+          : {}),
+      },
+    });
+    console.log(
+      ` Healed subscription ${sub.id} from Stripe; endDate=${sync.stripeCurrentPeriodEnd.toISOString()}`,
+    );
+    return true;
+  } catch (err) {
+    console.error(`Stripe heal failed for subscription ${sub.id}:`, err);
+    return false;
+  }
+}
+
 // Logical function to update subscriptions
 export async function checkAndUpdateSubscriptions() {
   console.log(' Checking subscriptions...');
@@ -95,26 +139,47 @@ export async function checkAndUpdateSubscriptions() {
     console.error('Subscription reminder job error:', err);
   }
 
-  // 1) Update expired subscriptions
+  // 0b) Heal EXPIRED rows that Stripe still shows as active (false expiry after missed period sync)
+  const wronglyExpired = await prisma.subscription.findMany({
+    where: {
+      status: 'EXPIRED',
+      stripeSubscriptionId: { not: null },
+    },
+    select: { id: true, stripeSubscriptionId: true, restaurantId: true },
+  });
+  for (const sub of wronglyExpired) {
+    const healed = await tryHealFromStripe(sub);
+    if (healed) {
+      await prisma.restaurant.update({
+        where: { id: sub.restaurantId },
+        data: { isSubscriptionActive: true, isActive: true },
+      });
+    }
+  }
+
+  // 1) Update expired subscriptions (re-sync Stripe first when linked)
   const expiredSubs = await prisma.subscription.findMany({
     where: {
       status: 'ACTIVE',
       endDate: { lt: now },
     },
+    select: { id: true, stripeSubscriptionId: true },
   });
 
+  let expiredCount = 0;
   for (const sub of expiredSubs) {
+    if (await tryHealFromStripe(sub)) continue;
     await prisma.subscription.update({
       where: { id: sub.id },
       data: { status: 'EXPIRED' },
     });
+    expiredCount += 1;
   }
 
   // 2) For each restaurant, determine the farthest active subscription to be "current"
   const restaurants = await prisma.restaurant.findMany();
 
   for (const restaurant of restaurants) {
-    // All currently active subscriptions for the restaurant
     const activeSubs = await prisma.subscription.findMany({
       where: {
         restaurantId: restaurant.id,
@@ -122,11 +187,10 @@ export async function checkAndUpdateSubscriptions() {
         startDate: { lte: now },
         endDate: { gte: now },
       },
-      orderBy: { endDate: 'desc' }, // Farthest expiration first
+      orderBy: { endDate: 'desc' },
     });
 
     if (activeSubs.length > 0) {
-      // No need to update a field that no longer exists
       await prisma.restaurant.update({
         where: { id: restaurant.id },
         data: {
@@ -146,7 +210,7 @@ export async function checkAndUpdateSubscriptions() {
   }
 
   console.log(
-    ` Checked ${expiredSubs.length} expired subscriptions and updated current subscriptions for ${restaurants.length} restaurants`,
+    ` Checked ${expiredCount} expired subscriptions and updated current subscriptions for ${restaurants.length} restaurants`,
   );
 }
 
