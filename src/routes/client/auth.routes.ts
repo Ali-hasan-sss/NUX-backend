@@ -11,6 +11,7 @@ import {
   resetPassword,
   sendVerificationCode,
   googleAuth,
+  appleAuth,
 } from '../../controllers/client/auth.controller';
 import {
   generalRateLimiter,
@@ -125,6 +126,18 @@ router.post(
   body('idToken').isString().notEmpty().withMessage('Google ID token is required'),
   validateRequest,
   googleAuth,
+);
+
+// Sign in with Apple (identityToken JWT; audience = iOS Bundle ID)
+router.post(
+  '/apple',
+  xssSanitizerMiddleware,
+  generalRateLimiter,
+  body('identityToken').isString().notEmpty().withMessage('Apple identity token is required'),
+  body('email').optional({ nullable: true }).isString(),
+  body('fullName').optional({ nullable: true }).isObject(),
+  validateRequest,
+  appleAuth,
 );
 
 // Admin Login

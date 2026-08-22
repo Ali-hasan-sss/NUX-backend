@@ -9,8 +9,22 @@ import { v4 as uuidv4 } from 'uuid';
 import { errorResponse, successResponse } from '../../utils/response';
 import { sendEmailVerificationCode, sendResetCodeEmail } from '../../utils/email';
 import { OAuth2Client } from 'google-auth-library';
+import * as jose from 'jose';
 
 const prisma = new PrismaClient();
+
+/** Native iOS Sign in with Apple — JWT audience is the app Bundle ID. */
+function getAppleClientId(): string {
+  return (
+    process.env.APPLE_CLIENT_ID?.trim() ||
+    process.env.APPLE_BUNDLE_ID?.trim() ||
+    'de.nuxapp.app'
+  );
+}
+
+const appleJwks = jose.createRemoteJWKSet(
+  new URL('https://appleid.apple.com/auth/keys'),
+);
 
 /**
  * @swagger
@@ -1227,5 +1241,217 @@ export const googleAuth = async (req: Request, res: Response) => {
   } catch (err: any) {
     console.error('Google auth error:', err?.message || err);
     return errorResponse(res, 'Invalid Google token or server error', 400);
+  }
+};
+
+/**
+ * @swagger
+ * /auth/apple:
+ *   post:
+ *     summary: Sign in or register with Sign in with Apple
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - identityToken
+ *             properties:
+ *               identityToken:
+ *                 type: string
+ *                 description: Apple identity token (JWT)
+ *               email:
+ *                 type: string
+ *                 description: Email from Apple (only on first authorization; may be private relay)
+ *               fullName:
+ *                 type: object
+ *                 properties:
+ *                   givenName:
+ *                     type: string
+ *                   familyName:
+ *                     type: string
+ *     responses:
+ *       200:
+ *         description: Login successful
+ *       400:
+ *         description: Invalid Apple token or missing email for new account
+ *       503:
+ *         description: Apple sign-in is not configured
+ */
+export const appleAuth = async (req: Request, res: Response) => {
+  try {
+    const { identityToken, email: bodyEmail, fullName: bodyFullName } = req.body;
+    if (!identityToken || typeof identityToken !== 'string') {
+      return errorResponse(res, 'Apple identity token is required', 400);
+    }
+
+    const appleClientId = getAppleClientId();
+    if (!appleClientId) {
+      console.error('APPLE_CLIENT_ID is not set');
+      return errorResponse(res, 'Apple sign-in is not configured', 503);
+    }
+
+    let payload: jose.JWTPayload;
+    try {
+      const verified = await jose.jwtVerify(identityToken, appleJwks, {
+        issuer: 'https://appleid.apple.com',
+        audience: appleClientId,
+      });
+      payload = verified.payload;
+    } catch (verifyErr: any) {
+      console.error('Apple jwtVerify failed:', verifyErr?.message || verifyErr);
+      return errorResponse(res, 'Invalid or expired Apple token', 400);
+    }
+
+    const appleId = typeof payload.sub === 'string' ? payload.sub : null;
+    if (!appleId) {
+      return errorResponse(res, 'Invalid Apple token', 400);
+    }
+
+    const tokenEmail =
+      typeof payload.email === 'string' && payload.email.trim()
+        ? payload.email.trim().toLowerCase()
+        : null;
+    const clientEmail =
+      typeof bodyEmail === 'string' && bodyEmail.trim()
+        ? bodyEmail.trim().toLowerCase()
+        : null;
+    const email = tokenEmail || clientEmail;
+
+    const given =
+      bodyFullName && typeof bodyFullName.givenName === 'string'
+        ? bodyFullName.givenName.trim()
+        : '';
+    const family =
+      bodyFullName && typeof bodyFullName.familyName === 'string'
+        ? bodyFullName.familyName.trim()
+        : '';
+    const fullNameFromBody = [given, family].filter(Boolean).join(' ') || null;
+
+    let user = await prisma.user.findUnique({ where: { appleId } });
+
+    if (!user && email) {
+      user = await prisma.user.findUnique({ where: { email } });
+    }
+
+    if (user) {
+      let u = user;
+      if (u.role === 'ADMIN') {
+        return errorResponse(res, 'Please use the admin login page', 400);
+      }
+      if (!u.appleId) {
+        await prisma.user.update({
+          where: { id: u.id },
+          data: { appleId },
+        });
+        u = { ...u, appleId };
+      }
+      if (!u.emailVerified) {
+        await prisma.user.update({
+          where: { id: u.id },
+          data: { emailVerified: new Date() },
+        });
+      }
+      if (!u.fullName && fullNameFromBody) {
+        await prisma.user.update({
+          where: { id: u.id },
+          data: { fullName: fullNameFromBody },
+        });
+        u = { ...u, fullName: fullNameFromBody };
+      }
+      user = u;
+    } else {
+      if (!email) {
+        return errorResponse(
+          res,
+          'Apple did not provide an email. Please use Hide My Email or share your email, then try again.',
+          400,
+        );
+      }
+      const placeholderPassword = await hashPassword(uuidv4() + Date.now());
+      const qrCode = uuidv4();
+      user = await prisma.user.create({
+        data: {
+          email,
+          password: placeholderPassword,
+          fullName: fullNameFromBody,
+          role: Role.USER,
+          qrCode,
+          appleId,
+          emailVerified: new Date(),
+        },
+      });
+    }
+
+    const accessToken = generateAccessToken({ userId: user.id, role: user.role });
+    const refreshToken = generateRefreshToken({ userId: user.id, role: user.role });
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { refreshToken },
+    });
+
+    let restaurantData: any = null;
+    if (user.isRestaurant) {
+      const restaurant = await prisma.restaurant.findUnique({
+        where: { userId: user.id },
+      });
+      if (restaurant) {
+        const activeSubs = await prisma.subscription.findMany({
+          where: {
+            restaurantId: restaurant.id,
+            status: 'ACTIVE',
+            endDate: { gte: new Date() },
+          },
+          include: { plan: true },
+          orderBy: { endDate: 'desc' },
+        });
+        const currentSub = activeSubs[0] || null;
+        const subscriptionData = currentSub
+          ? {
+              planName: currentSub.plan.title,
+              price: currentSub.plan.price,
+              endDate: currentSub.endDate,
+              status: currentSub.status,
+            }
+          : null;
+        restaurantData = {
+          id: restaurant.id,
+          name: restaurant.name,
+          address: restaurant.address,
+          latitude: restaurant.latitude,
+          longitude: restaurant.longitude,
+          isActive: restaurant.isActive,
+          isSubscriptionActive: restaurant.isSubscriptionActive,
+          subscription: subscriptionData,
+          activeSubscriptions: activeSubs.map((s) => ({
+            id: s.id,
+            planId: s.planId,
+            planName: s.plan.title,
+            price: s.plan.price,
+            startDate: s.startDate,
+            endDate: s.endDate,
+            status: s.status,
+          })),
+        };
+      }
+    }
+
+    return successResponse(res, 'Login successful', {
+      user: {
+        id: user.id,
+        email: user.email,
+        fullName: user.fullName,
+        role: user.role,
+        isActive: user.isActive,
+        emailVerified: !!user.emailVerified,
+      },
+      restaurant: restaurantData,
+      tokens: { accessToken, refreshToken },
+    });
+  } catch (err: any) {
+    console.error('Apple auth error:', err?.message || err);
+    return errorResponse(res, 'Invalid Apple token or server error', 400);
   }
 };

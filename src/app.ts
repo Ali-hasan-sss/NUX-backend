@@ -1,10 +1,13 @@
 import path from 'path';
+import dotenv from 'dotenv';
+
+dotenv.config();
+
 import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
-import dotenv from 'dotenv';
 import routes from './routes';
 import {
   securityMiddleware,
@@ -19,8 +22,6 @@ import {
   startCompanyAllowanceJob,
 } from './jobs/companyAllowanceJob';
 import { stripeWebhook } from './controllers/restaurant/subscription.controller';
-
-dotenv.config();
 
 const app = express();
 
