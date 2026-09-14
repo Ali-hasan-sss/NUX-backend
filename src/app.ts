@@ -66,9 +66,6 @@ app.post(
   stripeWebhook,
 );
 
-// Documentation and Swagger
-app.use('/', swaggerRoutes);
-
 // Health check endpoint
 app.get('/api/health', (req, res) => {
   res.json({
@@ -93,5 +90,9 @@ app.use('/api', mobileClientMiddleware);
 
 // All API routes
 app.use('/api', routes);
+
+// Swagger after /api: Express 5 routers do not fall through, so mounting
+// this at "/" first would 404 every API that the swagger router does not own.
+app.use('/', swaggerRoutes);
 
 export default app;

@@ -3,6 +3,7 @@ import { PrismaClient, UserRestaurantBalance } from '@prisma/client';
 import { errorResponse, successResponse } from '../../utils/response';
 import { calculateDistance } from '../../utils/check_location';
 import { sendNotificationToUser } from '../../services/notification.service';
+import { normalizeLoyaltyQrPayload } from '../../utils/loyaltyQr';
 
 const prisma = new PrismaClient();
 
@@ -258,7 +259,8 @@ export const listPublicPackages = async (req: Request, res: Response) => {
 export const scanQrCode = async (req: Request, res: Response) => {
   try {
     const userId = req.user!.id;
-    const { qrCode, latitude, longitude } = req.body;
+    const { qrCode: rawQrCode, latitude, longitude } = req.body;
+    const qrCode = normalizeLoyaltyQrPayload(rawQrCode);
 
     if (!qrCode) {
       return errorResponse(res, 'QR code is required', 400);

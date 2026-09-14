@@ -18,6 +18,10 @@
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true
   },
+  "ts-node": {
+    "transpileOnly": true,
+    "preferTsExts": true
+  },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]
 }

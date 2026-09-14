@@ -64,10 +64,10 @@ export const getAllPlans = async (req: Request, res: Response) => {
     const plans = await prisma.plan.findMany({
       where: {
         isActive: true,
-        price: { gt: 0 },
         NOT: {
           title: FREE_TRIAL_PLAN_TITLE,
         },
+        OR: [{ price: { gt: 0 } }, { priceOnRequest: true }],
       },
       include: {
         permissions: {
@@ -162,14 +162,14 @@ export const getPlanById = async (req: Request, res: Response) => {
       return errorResponse(res, 'Invalid plan ID', 400);
     }
 
-    const plan = await prisma.plan.findUnique({
+    const plan = await prisma.plan.findFirst({
       where: {
         id: planId,
         isActive: true,
-        price: { gt: 0 },
         NOT: {
           title: FREE_TRIAL_PLAN_TITLE,
         },
+        OR: [{ price: { gt: 0 } }, { priceOnRequest: true }],
       },
       include: {
         permissions: {

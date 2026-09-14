@@ -3,6 +3,7 @@ import { errorResponse, successResponse } from '../../utils/response';
 import { PrismaClient } from '@prisma/client';
 import Stripe from 'stripe';
 import { stripeStatementDescriptor } from '../../utils/stripeSubscriptionSync';
+import { resolvePlanDescriptions } from '../../utils/planDescriptions';
 
 // Initialize Stripe
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
@@ -272,9 +273,6 @@ async function archiveStripeProduct(productId: string | null): Promise<void> {
 export const getAllPlans = async (req: Request, res: Response) => {
   try {
     const plans = (await prisma.plan.findMany({
-      where: {
-        isActive: true,
-      },
       include: {
         permissions: true,
       },
@@ -377,19 +375,34 @@ export const createPlan = async (req: Request, res: Response) => {
     const {
       title,
       description,
+      descriptionEn,
+      descriptionAr,
+      descriptionDe,
+      descriptionTr,
       currency,
       price,
       monthlyPrice,
       annualPrice,
       displayOrder,
       permissions = [],
+      priceOnRequest = false,
     } = req.body;
-    const finalMonthlyPrice = Number(monthlyPrice ?? price);
-    const finalAnnualPrice = Number(annualPrice ?? finalMonthlyPrice * 12);
+    const isPriceOnRequest = Boolean(priceOnRequest);
+    const descriptions = resolvePlanDescriptions({
+      description,
+      descriptionEn,
+      descriptionAr,
+      descriptionDe,
+      descriptionTr,
+    });
+    const finalMonthlyPrice = isPriceOnRequest ? 0 : Number(monthlyPrice ?? price);
+    const finalAnnualPrice = isPriceOnRequest
+      ? 0
+      : Number(annualPrice ?? finalMonthlyPrice * 12);
     const finalPrice = finalMonthlyPrice;
     const finalDuration = 30;
 
-    if (finalPrice <= 0 || isFreeTrialPlanTitle(title)) {
+    if (!isPriceOnRequest && (finalPrice <= 0 || isFreeTrialPlanTitle(title))) {
       return errorResponse(
         res,
         'Free trial plan is system-managed and is created only by seed',
@@ -410,11 +423,11 @@ export const createPlan = async (req: Request, res: Response) => {
       annualPriceId: null,
     };
 
-    // Only create Stripe product and price if the plan is not free (price > 0)
-    if (finalPrice > 0) {
+    // Only create Stripe product and price if the plan is billed
+    if (!isPriceOnRequest && finalPrice > 0) {
       stripeData = await createStripeProductAndPrice(
         title,
-        description,
+        descriptions.descriptionEn ?? descriptions.description,
         finalPrice,
         currency,
         finalDuration,
@@ -426,13 +439,18 @@ export const createPlan = async (req: Request, res: Response) => {
     const plan = (await prisma.plan.create({
       data: {
         title,
-        description,
+        description: descriptions.description,
+        descriptionEn: descriptions.descriptionEn,
+        descriptionAr: descriptions.descriptionAr,
+        descriptionDe: descriptions.descriptionDe,
+        descriptionTr: descriptions.descriptionTr,
         price: finalPrice,
         monthlyPrice: finalMonthlyPrice,
         annualPrice: finalAnnualPrice,
         currency,
         duration: finalDuration,
         displayOrder: finalDisplayOrder,
+        priceOnRequest: isPriceOnRequest,
         stripeProductId: stripeData.productId,
         stripePriceId: stripeData.priceId,
         stripeMonthlyPriceId: stripeData.monthlyPriceId,
@@ -517,6 +535,10 @@ export const updatePlan = async (req: Request, res: Response) => {
     const {
       title,
       description,
+      descriptionEn,
+      descriptionAr,
+      descriptionDe,
+      descriptionTr,
       currency,
       price,
       monthlyPrice,
@@ -524,16 +546,25 @@ export const updatePlan = async (req: Request, res: Response) => {
       displayOrder,
       isActive,
       permissions,
+      priceOnRequest,
     } = req.body;
 
     const plan = await prisma.plan.findUnique({ where: { id: Number(id) } });
     if (!plan) return errorResponse(res, 'Plan not found', 404);
 
     const isFreeTrialPlan = isFreeTrialPlanTitle(plan.title);
+    const isPriceOnRequest = isFreeTrialPlan
+      ? false
+      : priceOnRequest !== undefined
+        ? Boolean(priceOnRequest)
+        : plan.priceOnRequest;
+    const descriptions = resolvePlanDescriptions(
+      { description, descriptionEn, descriptionAr, descriptionDe, descriptionTr },
+      plan,
+    );
     const finalTitle = isFreeTrialPlan ? FREE_TRIAL_PLAN_TITLE : (title ?? plan.title);
-    const finalDescription = description ?? plan.description;
     const finalMonthlyPrice =
-      isFreeTrialPlan
+      isFreeTrialPlan || isPriceOnRequest
         ? 0
         : monthlyPrice !== undefined
         ? Number(monthlyPrice)
@@ -541,7 +572,7 @@ export const updatePlan = async (req: Request, res: Response) => {
           ? Number(price)
           : (plan.monthlyPrice ?? plan.price);
     const finalAnnualPrice =
-      isFreeTrialPlan
+      isFreeTrialPlan || isPriceOnRequest
         ? 0
         : annualPrice !== undefined
           ? Number(annualPrice)
@@ -552,7 +583,11 @@ export const updatePlan = async (req: Request, res: Response) => {
     const finalDisplayOrder =
       displayOrder !== undefined ? Number(displayOrder) : plan.displayOrder;
 
-    if (!isFreeTrialPlan && (finalPrice <= 0 || isFreeTrialPlanTitle(finalTitle))) {
+    if (
+      !isFreeTrialPlan &&
+      !isPriceOnRequest &&
+      (finalPrice <= 0 || isFreeTrialPlanTitle(finalTitle))
+    ) {
       return errorResponse(
         res,
         'Only the system-managed Free Trial plan can be free',
@@ -568,31 +603,31 @@ export const updatePlan = async (req: Request, res: Response) => {
     const currencyChanged = currency !== undefined && currency !== plan.currency;
     const durationChanged = plan.duration !== finalDuration;
     const needsStripeUpdate =
-      priceChanged || currencyChanged || durationChanged || title !== undefined;
+      !isPriceOnRequest &&
+      (priceChanged || currencyChanged || durationChanged || title !== undefined);
 
-    let stripeData: StripePlanData | null = isFreeTrialPlan
+    let stripeData: StripePlanData | null = isFreeTrialPlan || isPriceOnRequest
       ? {
-          productId: null,
-          priceId: null,
-          monthlyPriceId: null,
-          annualPriceId: null,
+          productId: isPriceOnRequest ? plan.stripeProductId : null,
+          priceId: isPriceOnRequest ? plan.stripePriceId : null,
+          monthlyPriceId: isPriceOnRequest ? plan.stripeMonthlyPriceId : null,
+          annualPriceId: isPriceOnRequest ? plan.stripeAnnualPriceId : null,
         }
       : null;
 
-    // Only update Stripe if the plan is not free (price > 0)
-    if (!isFreeTrialPlan && needsStripeUpdate && finalPrice > 0) {
+    // Only update Stripe if the plan is billed
+    if (!isFreeTrialPlan && !isPriceOnRequest && needsStripeUpdate && finalPrice > 0) {
       stripeData = await updateStripeProductAndPrice(
         plan.stripeProductId,
         finalTitle,
-        finalDescription,
+        descriptions.descriptionEn ?? descriptions.description,
         finalPrice,
         finalCurrency,
         finalDuration,
         finalMonthlyPrice,
         finalAnnualPrice,
       );
-    } else if (needsStripeUpdate && finalPrice === 0) {
-      // For free plans, clear Stripe data if it exists
+    } else if (!isPriceOnRequest && needsStripeUpdate && finalPrice === 0) {
       stripeData = {
         productId: null,
         priceId: null,
@@ -603,11 +638,16 @@ export const updatePlan = async (req: Request, res: Response) => {
 
     const updateData: any = {
       title: finalTitle,
-      description: finalDescription,
+      description: descriptions.description,
+      descriptionEn: descriptions.descriptionEn,
+      descriptionAr: descriptions.descriptionAr,
+      descriptionDe: descriptions.descriptionDe,
+      descriptionTr: descriptions.descriptionTr,
       price: finalPrice,
       monthlyPrice: finalMonthlyPrice,
       annualPrice: finalAnnualPrice,
       currency: finalCurrency,
+      priceOnRequest: isPriceOnRequest,
       isActive: isFreeTrialPlan
         ? true
         : isActive !== undefined

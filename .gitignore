@@ -20,6 +20,11 @@ pnpm-debug.log*
 dist/
 build/
 coverage/
+src/**/*.js
+src/**/*.js.map
+src/**/*.d.ts.map
+src/**/*.d.ts
+!src/types/**/*.d.ts
 
 # Uploaded files (stored on server, path returned without domain)
 uploads/

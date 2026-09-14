@@ -130,12 +130,17 @@ model Plan {
   id              Int            @id @default(autoincrement())
   title           String
   description     String?
+  descriptionEn   String?        @db.Text
+  descriptionAr   String?        @db.Text
+  descriptionDe   String?        @db.Text
+  descriptionTr   String?        @db.Text
   price           Float
   monthlyPrice    Float?
   annualPrice     Float?
   duration        Int
   isActive        Boolean        @default(true)
   displayOrder    Int            @default(0)
+  priceOnRequest  Boolean        @default(false)
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @default(now()) @updatedAt
   currency        String?
