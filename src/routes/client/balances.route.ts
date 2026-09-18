@@ -6,6 +6,7 @@ import {
   listPublicPackages,
   payAtRestaurant,
   scanQrCode,
+  getLoyaltyScanStatus,
 } from '../../controllers/client/balances.controller';
 import { validateRequest } from '../../middlewares/security';
 
@@ -28,6 +29,8 @@ router.post(
   validateRequest,
   scanQrCode,
 );
+
+router.get('/scan-approval/:id', authenticateUser, getLoyaltyScanStatus);
 
 // post pay with stars or balance
 router.post(

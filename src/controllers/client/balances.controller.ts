@@ -1,9 +1,14 @@
 import { Request, Response } from 'express';
-import { PrismaClient, UserRestaurantBalance } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 import { errorResponse, successResponse } from '../../utils/response';
 import { calculateDistance } from '../../utils/check_location';
 import { sendNotificationToUser } from '../../services/notification.service';
 import { normalizeLoyaltyQrPayload } from '../../utils/loyaltyQr';
+import {
+  createLoyaltyScanRequest,
+  getCustomerScanApproval,
+  LoyaltyScanApprovalError,
+} from '../../services/loyaltyScanApproval.service';
 
 const prisma = new PrismaClient();
 
@@ -220,7 +225,7 @@ export const listPublicPackages = async (req: Request, res: Response) => {
  * @swagger
  * /client/balance/scan-qr:
  *   post:
- *     summary: Scan QR code to earn stars at a restaurant
+ *     summary: Scan QR code and wait for restaurant dashboard approval before earning stars
  *     tags: [balance]
  *     security:
  *       - bearerAuth: []
@@ -246,7 +251,7 @@ export const listPublicPackages = async (req: Request, res: Response) => {
  *                 example: 139.6917
  *     responses:
  *       200:
- *         description: Stars updated successfully
+ *         description: Scan submitted; waiting for restaurant approval. Stars are awarded only after approval.
  *       400:
  *         description: Invalid input or QR code
  *       403:
@@ -300,69 +305,38 @@ export const scanQrCode = async (req: Request, res: Response) => {
       return errorResponse(res, 'You must be at the restaurant location to scan this QR', 403);
     }
 
-    // update or create balance
-    let balance = await prisma.userRestaurantBalance.findUnique({
-      where: {
-        userId_restaurantId: {
-          userId,
-          restaurantId: restaurant.id,
-        },
-      },
+    const approval = await createLoyaltyScanRequest({
+      userId,
+      restaurantId: restaurant.id,
+      restaurantOwnerId: restaurant.userId,
+      type: isMeal ? 'meal' : 'drink',
+      qrCode,
+      latitude,
+      longitude,
     });
 
-    if (!balance) {
-      balance = await prisma.userRestaurantBalance.create({
-        data: {
-          userId,
-          restaurantId: restaurant.id,
-          stars_meal: isMeal ? 1 : 0,
-          stars_drink: isDrink ? 1 : 0,
-          balance: 0,
-        },
-      });
-    } else {
-      balance = await prisma.userRestaurantBalance.update({
-        where: { id: balance.id },
-        data: {
-          stars_meal: isMeal ? balance.stars_meal + 1 : balance.stars_meal,
-          stars_drink: isDrink ? balance.stars_drink + 1 : balance.stars_drink,
-        },
-      });
-    }
-
-    // save in ScanLog
-    await prisma.scanLog.create({
-      data: {
-        userId,
-        restaurantId: restaurant.id,
-        type: isMeal ? 'meal' : 'drink',
-        qrCode,
-        latitude,
-        longitude,
-      },
-    });
-
-    // save in StarsTransaction
-    await prisma.starsTransaction.create({
-      data: {
-        userId,
-        restaurantId: restaurant.id,
-        type: isMeal ? 'meal' : 'drink',
-        stars_meal: isMeal ? 1 : 0,
-        stars_drink: isDrink ? 1 : 0,
-      },
-    });
-
-    await sendNotificationToUser({
-      userId: userId,
-      title: 'You received a stars!',
-      body: `You received ${isMeal ? 1 : 0}  stars meal & ${isDrink ? 1 : 0} stars drink from ${restaurant.name}`,
-      type: 'STARS',
-    });
-
-    return successResponse(res, 'Stars updated successfully', balance);
+    return successResponse(res, 'Waiting for restaurant approval', approval);
   } catch (error) {
     console.error('Scan QR error:', error);
+    return errorResponse(res, 'Server error', 500);
+  }
+};
+
+export const getLoyaltyScanStatus = async (req: Request, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const approvalId = String(req.params.id ?? '').trim();
+    if (!approvalId) {
+      return errorResponse(res, 'Approval ID is required', 400);
+    }
+
+    const approval = await getCustomerScanApproval(userId, approvalId);
+    return successResponse(res, 'Scan approval status fetched', approval);
+  } catch (error) {
+    if (error instanceof LoyaltyScanApprovalError) {
+      return errorResponse(res, error.message, error.statusCode, error.code);
+    }
+    console.error('Get loyalty scan status error:', error);
     return errorResponse(res, 'Server error', 500);
   }
 };

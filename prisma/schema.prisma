@@ -35,6 +35,7 @@ model User {
   restaurants             Restaurant?
   scanLogs                ScanLog[]
   StarsTransactions       StarsTransaction[]
+  loyaltyScanApprovals    LoyaltyScanApproval[]
   topUps                  TopUp[]
   balances                UserRestaurantBalance[]
   subAdmin                SubAdmin?
@@ -116,6 +117,7 @@ model Restaurant {
   ownedGroups          RestaurantGroup[]
   scanLogs             ScanLog[]
   starsTransactions    StarsTransaction[]
+  loyaltyScanApprovals LoyaltyScanApproval[]
   subscriptions        Subscription[]          @relation("RestaurantSubscriptions")
   topUps               TopUp[]
   TopUpPackages        TopUpPackage[]
@@ -212,6 +214,34 @@ model ScanLog {
   id           Int        @id @default(autoincrement())
   restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
   user         User       @relation(fields: [userId], references: [id])
+}
+
+enum LoyaltyScanApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+/// Customer loyalty QR scan; stars are awarded only after restaurant dashboard approval.
+model LoyaltyScanApproval {
+  id           String                    @id @default(uuid())
+  userId       String
+  restaurantId String
+  type         scanType
+  qrCode       String
+  latitude     Float
+  longitude    Float
+  status       LoyaltyScanApprovalStatus @default(PENDING)
+  expiresAt    DateTime
+  resolvedAt   DateTime?
+  createdAt    DateTime                  @default(now())
+  user         User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  restaurant   Restaurant                @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@index([restaurantId, status])
+  @@index([userId, status])
+  @@index([expiresAt])
 }
 
 model StarsTransaction {
