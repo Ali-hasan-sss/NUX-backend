@@ -1,9 +1,17 @@
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { successResponse, errorResponse } from '../../utils/response';
+import { localizePlan } from '../../utils/planDescriptions';
 
 const prisma = new PrismaClient();
 const FREE_TRIAL_PLAN_TITLE = 'Free Trial';
+
+function requestPlanLang(req: Request): string {
+  const queryLang = req.query.lang;
+  if (typeof queryLang === 'string' && queryLang.trim()) return queryLang;
+  const header = String(req.headers['accept-language'] || '').split(',')[0];
+  return header || 'en';
+}
 
 /**
  * @swagger
@@ -82,7 +90,9 @@ export const getAllPlans = async (req: Request, res: Response) => {
       orderBy: [{ displayOrder: 'asc' }, { price: 'asc' }, { id: 'asc' }],
     });
 
-    return successResponse(res, 'Plans retrieved successfully', plans);
+    const lang = requestPlanLang(req);
+    const localized = plans.map((plan) => localizePlan(plan, lang));
+    return successResponse(res, 'Plans retrieved successfully', localized);
   } catch (error) {
     console.error('Error fetching plans:', error);
     return errorResponse(res, 'Failed to fetch plans', 500);
@@ -187,7 +197,11 @@ export const getPlanById = async (req: Request, res: Response) => {
       return errorResponse(res, 'Plan not found', 404);
     }
 
-    return successResponse(res, 'Plan retrieved successfully', plan);
+    return successResponse(
+      res,
+      'Plan retrieved successfully',
+      localizePlan(plan, requestPlanLang(req)),
+    );
   } catch (error) {
     console.error('Error fetching plan:', error);
     return errorResponse(res, 'Failed to fetch plan', 500);
