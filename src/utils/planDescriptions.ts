@@ -45,11 +45,11 @@ export function resolvePlanDescriptions(
 }
 
 export function normalizePlanLang(raw: unknown): string {
-  const code = String(raw || 'en')
+  const code = String(raw || "en")
     .toLowerCase()
     .split(/[-_]/)[0]
-    .trim();
-  return (SUPPORTED_PLAN_LANGS as readonly string[]).includes(code) ? code : 'en';
+    ?.trim() ?? "en";
+  return (SUPPORTED_PLAN_LANGS as readonly string[]).includes(code) ? code : "en";
 }
 
 export function pickLocalizedPlanDescription(
@@ -70,7 +70,8 @@ export function pickLocalizedPlanDescription(
     emptyToNull(plan?.description) ??
     byLang.ar ??
     byLang.de ??
-    byLang.tr
+    byLang.tr ??
+    null
   );
 }
 
