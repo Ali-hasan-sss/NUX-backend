@@ -143,6 +143,7 @@ model Plan {
   isActive        Boolean        @default(true)
   displayOrder    Int            @default(0)
   priceOnRequest  Boolean        @default(false)
+  isPopular       Boolean        @default(false)
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @default(now()) @updatedAt
   currency        String?

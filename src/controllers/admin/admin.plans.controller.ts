@@ -386,6 +386,7 @@ export const createPlan = async (req: Request, res: Response) => {
       displayOrder,
       permissions = [],
       priceOnRequest = false,
+      isPopular = false,
     } = req.body;
     const isPriceOnRequest = Boolean(priceOnRequest);
     const descriptions = resolvePlanDescriptions({
@@ -451,6 +452,7 @@ export const createPlan = async (req: Request, res: Response) => {
         duration: finalDuration,
         displayOrder: finalDisplayOrder,
         priceOnRequest: isPriceOnRequest,
+        isPopular: Boolean(isPopular),
         stripeProductId: stripeData.productId,
         stripePriceId: stripeData.priceId,
         stripeMonthlyPriceId: stripeData.monthlyPriceId,
@@ -467,6 +469,13 @@ export const createPlan = async (req: Request, res: Response) => {
         permissions: true,
       },
     })) as any;
+
+    if (plan.isPopular) {
+      await prisma.plan.updateMany({
+        where: { id: { not: plan.id } },
+        data: { isPopular: false },
+      });
+    }
 
     return successResponse(res, 'Plan created successfully', plan, 201);
   } catch (error) {
@@ -547,6 +556,7 @@ export const updatePlan = async (req: Request, res: Response) => {
       isActive,
       permissions,
       priceOnRequest,
+      isPopular,
     } = req.body;
 
     const plan = await prisma.plan.findUnique({ where: { id: Number(id) } });
@@ -603,8 +613,7 @@ export const updatePlan = async (req: Request, res: Response) => {
     const currencyChanged = currency !== undefined && currency !== plan.currency;
     const durationChanged = plan.duration !== finalDuration;
     const needsStripeUpdate =
-      !isPriceOnRequest &&
-      (priceChanged || currencyChanged || durationChanged || title !== undefined);
+      !isPriceOnRequest && (priceChanged || currencyChanged || durationChanged);
 
     let stripeData: StripePlanData | null = isFreeTrialPlan || isPriceOnRequest
       ? {
@@ -655,6 +664,7 @@ export const updatePlan = async (req: Request, res: Response) => {
           : plan.isActive,
       duration: finalDuration,
       displayOrder: finalDisplayOrder,
+      isPopular: isPopular !== undefined ? Boolean(isPopular) : plan.isPopular,
     };
 
     // Add Stripe IDs if updated
@@ -675,6 +685,13 @@ export const updatePlan = async (req: Request, res: Response) => {
           isUnlimited: permission.isUnlimited || false,
         })),
       };
+    }
+
+    if (updateData.isPopular) {
+      await prisma.plan.updateMany({
+        where: { id: { not: Number(id) } },
+        data: { isPopular: false },
+      });
     }
 
     const updated = (await prisma.plan.update({
@@ -727,8 +744,6 @@ export const deletePlan = async (req: Request, res: Response) => {
       return errorResponse(res, 'Free trial plan is system-managed and cannot be deleted', 400);
     }
 
-    await archiveStripeProduct(plan.stripeProductId);
-
     const subscriptionsCount = await prisma.subscription.count({
       where: { planId: Number(id) },
     });
@@ -736,13 +751,7 @@ export const deletePlan = async (req: Request, res: Response) => {
     if (subscriptionsCount > 0) {
       const deactivated = await prisma.plan.update({
         where: { id: Number(id) },
-        data: {
-          isActive: false,
-          stripeProductId: null,
-          stripePriceId: null,
-          stripeMonthlyPriceId: null,
-          stripeAnnualPriceId: null,
-        },
+        data: { isActive: false },
         include: { permissions: true },
       });
 
@@ -752,6 +761,8 @@ export const deletePlan = async (req: Request, res: Response) => {
         deactivated,
       );
     }
+
+    await archiveStripeProduct(plan.stripeProductId);
 
     await prisma.$transaction([
       prisma.permission.deleteMany({ where: { planId: Number(id) } }),

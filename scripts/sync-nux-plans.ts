@@ -10,6 +10,12 @@ const stripe = process.env.STRIPE_SECRET_KEY
 
 type CatalogKey = "loyalty" | "menu" | "starter-plus" | "gastro-pro" | "enterprise";
 
+type PermissionSpec = {
+  type: PermissionType;
+  value: number | null;
+  isUnlimited: boolean;
+};
+
 const CATALOG: Record<
   CatalogKey,
   {
@@ -18,11 +24,9 @@ const CATALOG: Record<
     annual: number;
     displayOrder: number;
     priceOnRequest?: boolean;
-    createPermissions?: Array<{
-      type: PermissionType;
-      value: number | null;
-      isUnlimited: boolean;
-    }>;
+    isPopular?: boolean;
+    ensurePermissions?: PermissionSpec[];
+    createPermissions?: PermissionSpec[];
   }
 > = {
   loyalty: {
@@ -30,6 +34,16 @@ const CATALOG: Record<
     monthly: 6.9,
     annual: 74.4,
     displayOrder: 1,
+    ensurePermissions: [
+      { type: "MANAGE_QR_CODES", value: null, isUnlimited: true },
+      { type: "MANAGE_ADS", value: null, isUnlimited: true },
+      { type: "CUSTOMER_LOYALTY", value: null, isUnlimited: true },
+    ],
+    createPermissions: [
+      { type: "MANAGE_QR_CODES", value: null, isUnlimited: true },
+      { type: "MANAGE_ADS", value: null, isUnlimited: true },
+      { type: "CUSTOMER_LOYALTY", value: null, isUnlimited: true },
+    ],
   },
   menu: {
     title: "NUX Menu",
@@ -52,6 +66,7 @@ const CATALOG: Record<
     monthly: 34.9,
     annual: 376.9,
     displayOrder: 4,
+    isPopular: true,
     createPermissions: [
       { type: "MANAGE_ORDERS", value: null, isUnlimited: true },
     ],
@@ -138,16 +153,68 @@ async function syncStripe(opts: {
   }
 }
 
+async function ensurePermissions(planId: number, permissions: PermissionSpec[]) {
+  for (const permission of permissions) {
+    await prisma.permission.upsert({
+      where: {
+        planId_type: {
+          planId,
+          type: permission.type,
+        },
+      },
+      create: {
+        planId,
+        type: permission.type,
+        value: permission.value,
+        isUnlimited: permission.isUnlimited,
+      },
+      update: {},
+    });
+  }
+}
+
 async function upsertCatalogPlan(
   key: CatalogKey,
   existing: { id: number; stripeProductId: string | null } | null,
 ) {
   const spec = CATALOG[key];
   const priceOnRequest = Boolean(spec.priceOnRequest);
+
+  if (existing) {
+    await prisma.plan.update({
+      where: { id: existing.id },
+      data: {
+        title: spec.title,
+        price: spec.monthly,
+        monthlyPrice: spec.monthly,
+        annualPrice: spec.annual,
+        currency: "EUR",
+        duration: 30,
+        displayOrder: spec.displayOrder,
+        isActive: true,
+        priceOnRequest,
+        isPopular: Boolean(spec.isPopular),
+      },
+    });
+    if (spec.ensurePermissions?.length) {
+      await ensurePermissions(existing.id, spec.ensurePermissions);
+    }
+    if (spec.isPopular) {
+      await prisma.plan.updateMany({
+        where: { id: { not: existing.id } },
+        data: { isPopular: false },
+      });
+    }
+    console.log(
+      `Updated ${spec.title} (id=${existing.id}) without changing Stripe Product/Price IDs`,
+    );
+    return existing.id;
+  }
+
   const stripeData = priceOnRequest
     ? null
     : await syncStripe({
-        productId: existing?.stripeProductId ?? null,
+        productId: null,
         title: spec.title,
         monthly: spec.monthly,
         annual: spec.annual,
@@ -164,6 +231,7 @@ async function upsertCatalogPlan(
     displayOrder: spec.displayOrder,
     isActive: true,
     priceOnRequest,
+    isPopular: Boolean(spec.isPopular),
     ...(stripeData
       ? {
           stripeProductId: stripeData.productId,
@@ -174,11 +242,6 @@ async function upsertCatalogPlan(
       : {}),
   };
 
-  if (existing) {
-    await prisma.plan.update({ where: { id: existing.id }, data });
-    return existing.id;
-  }
-
   const created = await prisma.plan.create({
     data: {
       ...data,
@@ -187,6 +250,12 @@ async function upsertCatalogPlan(
         : undefined,
     },
   });
+  if (spec.isPopular) {
+    await prisma.plan.updateMany({
+      where: { id: { not: created.id } },
+      data: { isPopular: false },
+    });
+  }
   return created.id;
 }
 
@@ -275,14 +344,21 @@ async function main() {
       id: { notIn: [...keepIds] },
       NOT: { title: "Free Trial" },
     },
+    include: { _count: { select: { subscriptions: true } } },
   });
   for (const extra of extras) {
+    if (extra._count.subscriptions > 0) {
+      console.log(
+        `Skipped leftover plan with subscriptions (id=${extra.id}, title=${extra.title})`,
+      );
+      continue;
+    }
     await prisma.plan.update({
       where: { id: extra.id },
       data: { isActive: false },
     });
     console.log(
-      `Deactivated leftover public plan without deleting it (id=${extra.id}, title=${extra.title})`,
+      `Deactivated leftover public plan without deleting it or changing Stripe IDs (id=${extra.id}, title=${extra.title})`,
     );
   }
 
@@ -295,6 +371,7 @@ async function main() {
       annualPrice: true,
       isActive: true,
       priceOnRequest: true,
+      isPopular: true,
       displayOrder: true,
     },
   });
