@@ -128,6 +128,8 @@ export const getAllInvoices = async (req: Request, res: Response) => {
             select: {
               id: true,
               status: true,
+              startDate: true,
+              endDate: true,
               plan: {
                 select: {
                   id: true,

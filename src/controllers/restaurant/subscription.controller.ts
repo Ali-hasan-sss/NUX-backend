@@ -39,6 +39,21 @@ function periodOrNow(value: unknown): Date {
   return value instanceof Date && !isNaN(value.getTime()) ? value : new Date();
 }
 
+function billingPeriodFromActivation(opts: {
+  activatedAt: Date;
+  stripePeriodEnd?: Date;
+  billingCycle?: string | null;
+}): { start: Date; end: Date } {
+  const start = opts.activatedAt;
+  const durationDays = opts.billingCycle === 'annual' ? 365 : 30;
+  const fallbackEnd = new Date(start.getTime() + durationDays * 24 * 60 * 60 * 1000);
+  const end =
+    opts.stripePeriodEnd && opts.stripePeriodEnd.getTime() > start.getTime()
+      ? opts.stripePeriodEnd
+      : fallbackEnd;
+  return { start, end };
+}
+
 function isMissingStripeResource(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
 
@@ -608,9 +623,13 @@ export const confirmCheckoutSession = async (req: Request, res: Response) => {
     }
 
     const durationDays = subscriptionRow.billingCycle === 'annual' ? 365 : 30;
-    const fallbackEnd = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000);
-    const periodEnd = stripeSync?.stripeCurrentPeriodEnd ?? fallbackEnd;
-    const periodStart = stripeSync?.stripeCurrentPeriodStart;
+    const activatedAt = new Date();
+    const fallbackEnd = new Date(activatedAt.getTime() + durationDays * 24 * 60 * 60 * 1000);
+    const { start: periodStart, end: periodEnd } = billingPeriodFromActivation({
+      activatedAt,
+      stripePeriodEnd: stripeSync?.stripeCurrentPeriodEnd ?? fallbackEnd,
+      billingCycle: subscriptionRow.billingCycle,
+    });
 
     const subscriptionUpdateData: Record<string, unknown> = {
       status: 'ACTIVE',
@@ -619,13 +638,13 @@ export const confirmCheckoutSession = async (req: Request, res: Response) => {
       autoRenew: stripeSync?.autoRenew ?? true,
       stripeSubscriptionId: stripeSubscriptionId ?? null,
       stripeStatus: stripeSync?.stripeStatus ?? null,
+      startDate: periodStart,
       endDate: periodEnd,
       stripeCurrentPeriodEnd: periodEnd,
     };
 
-    if (periodStart) {
-      subscriptionUpdateData.stripeCurrentPeriodStart = periodStart;
-      subscriptionUpdateData.startDate = periodStart;
+    if (stripeSync?.stripeCurrentPeriodStart) {
+      subscriptionUpdateData.stripeCurrentPeriodStart = stripeSync.stripeCurrentPeriodStart;
     }
 
     await prisma.$transaction([
@@ -654,8 +673,8 @@ export const confirmCheckoutSession = async (req: Request, res: Response) => {
           status: 'PAID',
           amountPaid: plan.price,
           paymentMethod: paymentMethod,
-          periodStart: periodOrNow(periodStart),
-          periodEnd: periodOrNow(periodEnd),
+          periodStart,
+          periodEnd,
         },
         create: {
           restaurantId: subscriptionRow.restaurantId,
@@ -673,8 +692,8 @@ export const confirmCheckoutSession = async (req: Request, res: Response) => {
           currency: plan.currency || 'EUR',
           status: 'PAID',
           paymentMethod: paymentMethod,
-          periodStart: periodOrNow(periodStart),
-          periodEnd: periodOrNow(periodEnd),
+          periodStart,
+          periodEnd,
         },
       }),
     ]);
@@ -769,6 +788,7 @@ export const confirmPayPalCheckout = async (req: Request, res: Response) => {
           status: 'ACTIVE',
           paymentStatus: 'paid',
           paymentMethod: 'PayPal',
+          startDate: now,
           endDate,
         },
       }),
@@ -932,9 +952,13 @@ export const stripeWebhook = async (req: Request, res: Response) => {
         }
 
         const durationDays = subscriptionRow.billingCycle === 'annual' ? 365 : 30;
-        const fallbackEnd = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000);
-        const periodEnd = stripeSync?.stripeCurrentPeriodEnd ?? fallbackEnd;
-        const periodStart = stripeSync?.stripeCurrentPeriodStart;
+        const activatedAt = new Date();
+        const fallbackEnd = new Date(activatedAt.getTime() + durationDays * 24 * 60 * 60 * 1000);
+        const { start: periodStart, end: periodEnd } = billingPeriodFromActivation({
+          activatedAt,
+          stripePeriodEnd: stripeSync?.stripeCurrentPeriodEnd ?? fallbackEnd,
+          billingCycle: subscriptionRow.billingCycle,
+        });
 
         const subscriptionUpdateData: Record<string, unknown> = {
           status: 'ACTIVE',
@@ -943,13 +967,13 @@ export const stripeWebhook = async (req: Request, res: Response) => {
           autoRenew: stripeSync?.autoRenew ?? true,
           stripeSubscriptionId: stripeSubscriptionId ?? null,
           stripeStatus: stripeSync?.stripeStatus ?? null,
+          startDate: periodStart,
           endDate: periodEnd,
           stripeCurrentPeriodEnd: periodEnd,
         };
 
-        if (periodStart) {
-          subscriptionUpdateData.stripeCurrentPeriodStart = periodStart;
-          subscriptionUpdateData.startDate = periodStart;
+        if (stripeSync?.stripeCurrentPeriodStart) {
+          subscriptionUpdateData.stripeCurrentPeriodStart = stripeSync.stripeCurrentPeriodStart;
         }
 
         // Get plan data for invoice
@@ -983,8 +1007,8 @@ export const stripeWebhook = async (req: Request, res: Response) => {
               status: 'PAID',
               amountPaid: plan?.price || 0,
               paymentMethod: paymentMethod,
-              periodStart: periodOrNow(periodStart),
-              periodEnd: periodOrNow(periodEnd),
+              periodStart,
+              periodEnd,
             },
             create: {
               restaurantId: subscriptionRow.restaurantId,
@@ -1002,8 +1026,8 @@ export const stripeWebhook = async (req: Request, res: Response) => {
               currency: plan?.currency || 'EUR',
               status: 'PAID',
               paymentMethod: paymentMethod,
-              periodStart: periodOrNow(periodStart),
-              periodEnd: periodOrNow(periodEnd),
+              periodStart,
+              periodEnd,
             },
           }),
         ]);
@@ -1068,7 +1092,6 @@ export const stripeWebhook = async (req: Request, res: Response) => {
 
         if (periodStart) {
           subscriptionUpdateData.stripeCurrentPeriodStart = periodStart;
-          subscriptionUpdateData.startDate = periodStart;
         }
 
         await prisma.$transaction([
